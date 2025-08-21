@@ -4,7 +4,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
-import { createProgram } from "@/lib/actions";
+import { createGroup } from "@/lib/actions";
 import {
   Form,
   FormControl,
@@ -16,30 +16,33 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-const programFormSchema = z.object({
-  name: z.string().min(2, "Program name must be at least 2 characters."),
+const groupFormSchema = z.object({
+  name: z.string().min(2, "Group name must be at least 2 characters."),
+  sectionId: z.string(),
 });
 
-type ProgramFormProps = {
+type GroupFormProps = {
+  sectionId: string;
   onSuccess: () => void;
 };
 
-export function ProgramForm({ onSuccess }: ProgramFormProps) {
-  const form = useForm<z.infer<typeof programFormSchema>>({
-    resolver: zodResolver(programFormSchema),
+export function GroupForm({ sectionId, onSuccess }: GroupFormProps) {
+  const form = useForm<z.infer<typeof groupFormSchema>>({
+    resolver: zodResolver(groupFormSchema),
     defaultValues: {
       name: "",
+      sectionId: sectionId,
     },
   });
 
-  const onSubmit = async (values: z.infer<typeof programFormSchema>) => {
+  const onSubmit = async (values: z.infer<typeof groupFormSchema>) => {
     try {
-      const result = await createProgram(values);
+      const result = await createGroup(values);
       if (result?.success) {
         toast.success(result.message);
         onSuccess();
       } else {
-        toast.error(result?.message || "Failed to create program.");
+        toast.error(result?.message || "Failed to create group.");
       }
     } catch (error) {
       toast.error("An unexpected error occurred.");
@@ -54,7 +57,7 @@ export function ProgramForm({ onSuccess }: ProgramFormProps) {
           name="name"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Program Name</FormLabel>
+              <FormLabel>Group Name</FormLabel>
               <FormControl>
                 <Input {...field} />
               </FormControl>
@@ -63,7 +66,7 @@ export function ProgramForm({ onSuccess }: ProgramFormProps) {
           )}
         />
         <Button type="submit" className="w-full">
-          Create Program
+          Create Group
         </Button>
       </form>
     </Form>

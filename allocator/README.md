@@ -1,247 +1,180 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+Excellent work\! Completing the foundational resource management is a huge milestone. You've now built the "inventory" of your university. The next logical step is to create the "context" for allocation—the schedules and the groups of people who will participate in them.
 
-generator client {
-  provider = "prisma-client-js"
+This next phase is about bringing all the pieces together. We will build it in three sequential stages:
+
+1.  **Stage 1: Manage Attendee Structures**: Create the UI to define the academic hierarchy (Programs → Batches → Sections → Groups). We need to know *who* the attendees are before we can assign them to anything.
+2.  **Stage 2: Manage Schedule Instances**: Create the UI to define the scheduling periods (e.g., "Fall 2025 Semester"). These are the containers for your timetables.
+3.  **Stage 3: The Schedule Dashboard**: Build the main page for a single schedule instance where an administrator can assign the Courses, Personnel, and Rooms that you've already created. This is the core administrative task.
+
+Let's proceed with Stage 1.
+
+-----
+
+### Stage 1: Manage Attendee Structures (`/admin/programs`)
+
+This section is different from the others. Instead of a simple table, a nested, collapsible view is much more intuitive for managing a hierarchy. We'll build a single page where you can see and manage everything from Programs down to Groups.
+
+#### 1\. File Structure for `/admin/programs`
+
+Create these new files:
+
+  * `app/admin/programs/page.tsx`
+  * `app/admin/programs/_components/program-structure-client.tsx`
+  * `app/admin/programs/_components/program-form.tsx`
+  * `app/admin/programs/_components/batch-form.tsx`
+  * `app/admin/programs/_components/section-form.tsx`
+
+
+#### 2\. The Main Page (Server Component)
+
+This page fetches the nested data and passes it to the interactive client component.
+
+**File:** `app/admin/programs/page.tsx`
+
+```tsx
+import { getProgramsWithChildren } from "@/lib/actions";
+import { ProgramStructureClient } from "./_components/program-structure-client";
+
+export default async function ProgramsPage() {
+  const programs = await getProgramsWithChildren();
+
+  return (
+    <div className="container mx-auto py-10">
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-3xl font-bold">Academic Structure</h1>
+      </div>
+      <ProgramStructureClient programs={programs} />
+    </div>
+  );
 }
+```
 
-datasource db {
-  provider = "mongodb"
-  url      = env("DATABASE_URL") // Your MongoDB connection string in the .env file
+#### 4\. The Interactive Client Component
+
+This component will render the nested structure and handle the state for opening forms in dialogs. We'll use `shadcn/ui`'s `Collapsible` component to make it interactive.
+
+**File:** `app/admin/programs/_components/program-structure-client.tsx`
+
+```tsx
+"use client";
+
+import { useState } from "react";
+import { ProgramWithChildren } from "@/lib/types";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ChevronRight, PlusCircle } from "lucide-react";
+import { ProgramForm } from "./program-form";
+import { BatchForm } from "./batch-form";
+import { SectionForm } from "./section-form";
+
+// Define a type for the dialog state
+type DialogState = 
+  | { type: 'program'; data?: ProgramWithChildren }
+  | { type: 'batch'; data?: { programId: string } }
+  | { type: 'section'; data?: { batchId: string } }
+  | null;
+
+export function ProgramStructureClient({ programs: initialPrograms }: { programs: ProgramWithChildren[] }) {
+  const [dialogState, setDialogState] = useState<DialogState>(null);
+
+  // We'll manage the state locally to avoid a full page refresh on create/edit
+  const [programs, setPrograms] = useState(initialPrograms);
+
+  const handleSuccess = () => {
+    // In a real app, you would ideally refetch the data or update the state smartly.
+    // For now, we just close the dialog. A page refresh will show the new data.
+    setDialogState(null);
+  };
+
+  const renderDialogContent = () => {
+    if (!dialogState) return null;
+
+    switch (dialogState.type) {
+      case 'program':
+        return <ProgramForm program={dialogState.data} onSuccess={handleSuccess} />;
+      case 'batch':
+        return <BatchForm programId={dialogState.data?.programId!} onSuccess={handleSuccess} />;
+      case 'section':
+        return <SectionForm batchId={dialogState.data?.batchId!} onSuccess={handleSuccess} />;
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <>
+      <div className="p-4 border rounded-md">
+        <div className="flex justify-end mb-4">
+            <Button onClick={() => setDialogState({ type: 'program' })}>
+                <PlusCircle className="mr-2 h-4 w-4" /> Add Program
+            </Button>
+        </div>
+        <div className="space-y-2">
+          {programs.map((program) => (
+            <Collapsible key={program.id} className="group">
+              <div className="flex items-center gap-2 p-2 rounded-md hover:bg-muted">
+                <CollapsibleTrigger asChild>
+                  <div className="flex items-center flex-1 cursor-pointer">
+                    <ChevronRight className="h-4 w-4 transition-transform duration-200 group-data-[state=open]:rotate-90" />
+                    <span className="font-semibold ml-2">{program.name}</span>
+                  </div>
+                </CollapsibleTrigger>
+                <Button variant="ghost" size="sm" onClick={() => setDialogState({ type: 'batch', data: { programId: program.id } })}>Add Batch</Button>
+              </div>
+              <CollapsibleContent className="pl-6 border-l ml-4">
+                {program.batches.map((batch) => (
+                  <Collapsible key={batch.id} className="group">
+                     <div className="flex items-center gap-2 p-2 rounded-md hover:bg-muted">
+                        <CollapsibleTrigger asChild>
+                            <div className="flex items-center flex-1 cursor-pointer">
+                                <ChevronRight className="h-4 w-4 transition-transform duration-200 group-data-[state=open]:rotate-90" />
+                                <span className="ml-2">{batch.name}</span>
+                            </div>
+                        </CollapsibleTrigger>
+                        <Button variant="ghost" size="sm" onClick={() => setDialogState({ type: 'section', data: { batchId: batch.id } })}>Add Section</Button>
+                    </div>
+                    <CollapsibleContent className="pl-6 border-l ml-4">
+                       {batch.sections.map((section) => (
+                         <div key={section.id} className="p-2">
+                           <span>- {section.name}</span>
+                           {/* Add Group button/logic would go here */}
+                         </div>
+                       ))}
+                    </CollapsibleContent>
+                  </Collapsible>
+                ))}
+              </CollapsibleContent>
+            </Collapsible>
+          ))}
+        </div>
+      </div>
+      
+      <Dialog open={!!dialogState} onOpenChange={(isOpen) => !isOpen && setDialogState(null)}>
+        <DialogContent>
+            <DialogHeader>
+                <DialogTitle>
+                    {dialogState?.type === 'program' && 'Add/Edit Program'}
+                    {dialogState?.type === 'batch' && 'Add Batch'}
+                    {dialogState?.type === 'section' && 'Add Section'}
+                </DialogTitle>
+            </DialogHeader>
+            {renderDialogContent()}
+        </DialogContent>
+      </Dialog>
+    </>
+  );
 }
+```
 
-// ---------------------------------------------------
-// ENUMS & TYPES - For defining fixed sets of values
-// ---------------------------------------------------
+**Note:** The forms (`program-form.tsx`, etc.) would be very simple, following the same pattern as `course-form.tsx` but with just one or two fields. You would create them and import them as shown.
 
-enum Role {
-  LECTURER
-  LAB_ASSISTANT
-  COORDINATOR
-  ADVISOR
-  ADMIN
-  SPEAKER
-}
+-----
 
-enum RoomType {
-  LECTURE_HALL
-  COMPUTER_LAB
-  OFFICE
-  MEETING_ROOM
-  AUDITORIUM
-}
+### How to Proceed from Here
 
-enum AttendeeLevel {
-  SECTION // Activity is for the entire section
-  GROUP // Activity is for a sub-group of a section
-}
+1.  **Implement Stage 1 Fully**:
 
-enum ScheduleStatus {
-  DRAFT // Initial setup phase
-  PREFERENCES_OPEN // Personnel can log in and set preferences
-  LOCKED // Preferences are closed, ready for allocation
-  COMPLETED // Allocation is done and the schedule is published
-}
+      * Create the simple form components (`ProgramForm`, `BatchForm`, `SectionForm`) that the client component expects. They will each call their respective `create...` server action.
 
-enum DayOfWeek {
-  MONDAY
-  TUESDAY
-  WEDNESDAY
-  THURSDAY
-  FRIDAY
-  SATURDAY
-  SUNDAY
-}
 
-// Composite Type for embedding required personnel data directly into an ActivityTemplate
-type RequiredPersonnel {
-  role  Role
-  count Int
-}
-
-// ---------------------------------------------------
-// CORE RESOURCES - The fundamental building blocks
-// ---------------------------------------------------
-
-model User {
-  id    String @id @default(auto()) @map("_id") @db.ObjectId
-  name  String
-  email String @unique
-
-  roles Role[]
-
-  // A user can set many preferences
-  preferences PersonnelPreference[]
-
-  // A user can be assigned to many final scheduled events
-  assignedEvents ScheduledEvent[] @relation("ScheduledEventPersonnel")
-
-  // A user can be part of the pool for many schedules
-  scheduleInstances ScheduleInstance[]
-}
-
-model Room {
-  id       String   @id @default(auto()) @map("_id") @db.ObjectId
-  name     String   @unique // e.g., "B510 Room 17"
-  building String
-  capacity Int
-  type     RoomType
-
-  // A room can host many final scheduled events
-  scheduledEvents ScheduledEvent[]
-
-  // A room can be part of the pool for many schedules
-  scheduleInstances ScheduleInstance[]
-}
-
-// ---------------------------------------------------
-// ATTENDEE STRUCTURE - Hierarchical model for students
-// ---------------------------------------------------
-
-model Program {
-  id      String  @id @default(auto()) @map("_id") @db.ObjectId
-  name    String  @unique // "Computer Science - Regular"
-  batches Batch[]
-}
-
-model Batch {
-  id   String @id @default(auto()) @map("_id") @db.ObjectId
-  name String // "2023 Intake"
-
-  program   Program   @relation(fields: [programId], references: [id])
-  programId String    @db.ObjectId
-  sections  Section[]
-}
-
-model Section {
-  id   String @id @default(auto()) @map("_id") @db.ObjectId
-  name String // "Section A"
-
-  batch   Batch   @relation(fields: [batchId], references: [id])
-  batchId String  @db.ObjectId
-  groups  Group[]
-
-  // Sections that are part of a schedule instance
-  scheduleInstances ScheduleInstance[]
-
-  // Final scheduled events for this section
-  scheduledEvents ScheduledEvent[]
-}
-
-model Group {
-  id   String @id @default(auto()) @map("_id") @db.ObjectId
-  name String // "Group 1"
-
-  section   Section @relation(fields: [sectionId], references: [id])
-  sectionId String  @db.ObjectId
-
-  // Final scheduled events for this group
-  scheduledEvents ScheduledEvent[]
-}
-
-// ---------------------------------------------------
-// ACTIVITY DEFINITION - The templates for what needs to be scheduled
-// ---------------------------------------------------
-
-model Course {
-  id    String @id @default(auto()) @map("_id") @db.ObjectId
-  code  String @unique // "CS101"
-  title String // "Introduction to Programming"
-
-  // A course consists of one or more activity templates (e.g., lecture, lab)
-  activityTemplates ActivityTemplate[]
-
-  // A course can be offered in multiple schedule instances
-  scheduleInstances ScheduleInstance[]
-}
-
-model ActivityTemplate {
-  id                String              @id @default(auto()) @map("_id") @db.ObjectId
-  title             String // "CS101 Lecture" or "CS101 Lab"
-  durationMinutes   Int
-  attendeeLevel     AttendeeLevel // Is this for a SECTION or a GROUP?
-  requiredPersonnel RequiredPersonnel[] // Embedded list of required roles and counts
-  requiredRoomType  RoomType
-
-  course   Course @relation(fields: [courseId], references: [id])
-  courseId String @db.ObjectId
-
-  // Preferences set by personnel for this activity
-  preferences PersonnelPreference[]
-
-  // The final scheduled events that are instances of this template
-  scheduledEvents ScheduledEvent[]
-}
-
-// ---------------------------------------------------
-// SCHEDULING CONTEXT & OUTPUT
-// ---------------------------------------------------
-
-model ScheduleInstance {
-  id        String         @id @default(auto()) @map("_id") @db.ObjectId
-  name      String         @unique // "Fall 2025 - CS Year 1"
-  startDate DateTime
-  endDate   DateTime
-  status    ScheduleStatus @default(DRAFT)
-
-  // Many-to-Many relations defining the scope of this schedule
-  courseIds    String[]  @db.ObjectId
-  courses      Course[]  @relation(fields: [courseIds], references: [id])
-  sectionIds   String[]  @db.ObjectId
-  sections     Section[] @relation(fields: [sectionIds], references: [id])
-  personnelIds String[]  @db.ObjectId
-  personnel    User[]    @relation(fields: [personnelIds], references: [id])
-  roomIds      String[]  @db.ObjectId
-  rooms        Room[]    @relation(fields: [roomIds], references: [id])
-
-  // All preferences submitted for this schedule
-  preferences PersonnelPreference[]
-
-  // The final output: all scheduled events for this instance
-  scheduledEvents ScheduledEvent[]
-}
-
-model PersonnelPreference {
-  id   String @id @default(auto()) @map("_id") @db.ObjectId
-  rank Int
-
-  personnel          User             @relation(fields: [personnelId], references: [id])
-  personnelId        String           @db.ObjectId
-  activityTemplate   ActivityTemplate @relation(fields: [activityTemplateId], references: [id])
-  activityTemplateId String           @db.ObjectId
-  scheduleInstance   ScheduleInstance @relation(fields: [scheduleInstanceId], references: [id])
-  scheduleInstanceId String           @db.ObjectId
-
-  // A person can only rank a specific activity once per schedule
-  @@unique([personnelId, activityTemplateId, scheduleInstanceId])
-}
-
-// The final output of the allocation algorithm
-model ScheduledEvent {
-  id String @id @default(auto()) @map("_id") @db.ObjectId
-
-  dayOfWeek DayOfWeek
-  startTime String // "08:30"
-  endTime   String // "10:30"
-
-  // The template this event is an instance of
-  activityTemplate   ActivityTemplate @relation(fields: [activityTemplateId], references: [id])
-  activityTemplateId String           @db.ObjectId
-
-  // The resources assigned to this event
-  room   Room   @relation(fields: [roomId], references: [id])
-  roomId String @db.ObjectId
-
-  personnelIds String[] @db.ObjectId
-  personnel    User[]   @relation("ScheduledEventPersonnel", fields: [personnelIds], references: [id])
-
-  // The attendees for this event (one of these will be set, not both)
-  attendeeSection   Section? @relation(fields: [attendeeSectionId], references: [id])
-  attendeeSectionId String?  @db.ObjectId
-  attendeeGroup     Group?   @relation(fields: [attendeeGroupId], references: [id])
-  attendeeGroupId   String?  @db.ObjectId
-
-  // The schedule instance this event belongs to
-  scheduleInstance   ScheduleInstance @relation(fields: [scheduleInstanceId], references: [id])
-  scheduleInstanceId String           @db.ObjectId
-}
