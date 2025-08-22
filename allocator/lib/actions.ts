@@ -23,6 +23,7 @@ import {
   updateRoomSchema,
   updateUserSchema,
   userSchema,
+  removeResourceSchema,
 } from "./schemas";
 
 // ---------------------------------------------------
@@ -866,45 +867,41 @@ export async function getAllScheduleInstances() {
 
 /**
  * Fetches all data required for the schedule instance dashboard.
- * This includes the schedule itself, its currently assigned resources,
- * and a complete list of all available resources (courses, sections, etc.)
- * for the assignment tables.
+ * UPDATED: Now includes fully populated relations for assigned sections
+ * on the scheduleInstance object for the preview tab.
  */
 export async function getScheduleInstanceDetails(id: string) {
-  // Use Promise.all to fetch all data concurrently for better performance
   const [scheduleInstance, allCourses, allPersonnel, allRooms, allSections] =
     await Promise.all([
-      // Fetch the specific schedule instance with its currently linked resources
       prisma.scheduleInstance.findUnique({
         where: { id },
         include: {
           courses: true,
           personnel: true,
           rooms: true,
-          sections: true,
-        },
-      }),
-      // Fetch all available courses
-      prisma.course.findMany({ orderBy: { code: "asc" } }),
-      // Fetch all available users (personnel)
-      prisma.user.findMany({ orderBy: { name: "asc" } }),
-      // Fetch all available rooms
-      prisma.room.findMany({ orderBy: { name: "asc" } }),
-      // Fetch all available sections, including their parent batch and program for context
-      prisma.section.findMany({
-        include: {
-          batch: {
+          sections: {
+            // Populate relations for assigned sections
             include: {
-              program: true,
+              batch: {
+                include: {
+                  program: true,
+                },
+              },
             },
           },
         },
+      }),
+      prisma.course.findMany({ orderBy: { code: "asc" } }),
+      prisma.user.findMany({ orderBy: { name: "asc" } }),
+      prisma.room.findMany({ orderBy: { name: "asc" } }),
+      prisma.section.findMany({
+        include: { batch: { include: { program: true } } },
         orderBy: { name: "asc" },
       }),
     ]);
 
   if (!scheduleInstance) {
-    return null; // Or throw an error
+    return null;
   }
 
   return {
@@ -914,6 +911,52 @@ export async function getScheduleInstanceDetails(id: string) {
     allRooms,
     allSections,
   };
+}
+
+/**
+ * NEW: Removes (disconnects) a single resource from a ScheduleInstance.
+ */
+export async function removeResourceFromSchedule(
+  input: z.infer<typeof removeResourceSchema>
+): Promise<ActionResponse<any>> {
+  const validation = removeResourceSchema.safeParse(input);
+  if (!validation.success) {
+    return { success: false, message: "Invalid input." };
+  }
+
+  const { scheduleInstanceId, resourceId, resourceType } = validation.data;
+
+  try {
+    let updateData = {};
+    // Determine which relation to update based on the resource type
+    switch (resourceType) {
+      case "course":
+        updateData = { courses: { disconnect: { id: resourceId } } };
+        break;
+      case "personnel":
+        updateData = { personnel: { disconnect: { id: resourceId } } };
+        break;
+      case "room":
+        updateData = { rooms: { disconnect: { id: resourceId } } };
+        break;
+      case "section":
+        updateData = { sections: { disconnect: { id: resourceId } } };
+        break;
+      default:
+        return { success: false, message: "Invalid resource type." };
+    }
+
+    await prisma.scheduleInstance.update({
+      where: { id: scheduleInstanceId },
+      data: updateData,
+    });
+
+    revalidatePath(`/admin/schedules/${scheduleInstanceId}`);
+    return { success: true, message: "Resource removed successfully." };
+  } catch (e) {
+    console.error("Failed to remove resource:", e);
+    return { success: false, message: "Failed to remove resource." };
+  }
 }
 
 /**

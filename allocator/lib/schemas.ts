@@ -155,6 +155,16 @@ export const assignResourcesSchema = z.object({
   roomIds: z.array(z.string()).optional(),
 });
 
+/**
+ * It requires the schedule ID, the ID of the resource to remove,
+ * and the type of the resource to identify the correct database relation.
+ */
+export const removeResourceSchema = z.object({
+  scheduleInstanceId: z.string(),
+  resourceId: z.string(),
+  resourceType: z.enum(["course", "personnel", "room", "section"]),
+});
+
 // --- PersonnelPreference Schema ---
 export const preferencesSchema = z.object({
   personnelId: z.string(),

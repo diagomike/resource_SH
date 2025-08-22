@@ -14,6 +14,7 @@ import { CoursesAssignmentTab } from "./courses-assignment-tab";
 import { PersonnelAssignmentTab } from "./personnel-assignment-tab";
 import { RoomsAssignmentTab } from "./rooms-assignment-tab";
 import { AttendeesAssignmentTab } from "./attendees-assignment-tab";
+import { PreviewTab } from "./preview-assignments-tab";
 
 // Define a more specific type for Sections with their parent relations
 export type SectionWithRelations = Section & {
@@ -43,13 +44,25 @@ export function ResourceAssignmentClient({
   allSections,
 }: ResourceAssignmentClientProps) {
   return (
-    <Tabs defaultValue="courses">
-      <TabsList className="grid w-full grid-cols-4">
+    <Tabs defaultValue="preivew">
+      <TabsList className="grid w-full grid-cols-5">
+        <TabsTrigger value="preview">Preview</TabsTrigger>
         <TabsTrigger value="courses">Courses</TabsTrigger>
         <TabsTrigger value="personnel">Personnel</TabsTrigger>
         <TabsTrigger value="rooms">Rooms</TabsTrigger>
         <TabsTrigger value="attendees">Attendees</TabsTrigger>
       </TabsList>
+      <TabsContent value="preview">
+        <PreviewTab
+          scheduleInstance={{
+            ...scheduleInstance,
+            courses: allCourses,
+            personnel: allPersonnel,
+            rooms: allRooms,
+            sections: allSections,
+          }}
+        />
+      </TabsContent>
       <TabsContent value="courses">
         <CoursesAssignmentTab
           scheduleInstance={scheduleInstance}
