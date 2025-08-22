@@ -2,18 +2,18 @@
 
 import type React from "react";
 
-import { useState, useMemo } from "react";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { useState, useMemo, useEffect } from "react";
+import { Input } from "@/components/ui/input"; // Corrected import path
+import { Button } from "@/components/ui/button"; // Corrected import path
+import { Badge } from "@/components/ui/badge"; // Corrected import path
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { Card, CardContent } from "@/components/ui/card";
+} from "@/components/ui/select"; // Corrected import path
+import { Card, CardContent } from "@/components/ui/card"; // Corrected import path
 import {
   Table,
   TableBody,
@@ -21,17 +21,17 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@/components/ui/table"; // Corrected import path
 import { Search, Filter, X, SlidersHorizontal } from "lucide-react";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
-import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
+} from "@/components/ui/popover"; // Corrected import path
+import { Label } from "@/components/ui/label"; // Corrected import path
+import { Checkbox } from "@/components/ui/checkbox"; // Corrected import path
 
-interface FilterOption {
+export interface FilterOption {
   key: string;
   label: string;
   type: "select" | "multiselect" | "range" | "boolean";
@@ -44,7 +44,7 @@ interface EnhancedTableProps {
   data: any[];
   columns: {
     key: string;
-    label: string;
+    label: string | React.ReactNode; // Label can be a ReactNode for custom headers (like checkboxes)
     render?: (value: any, row: any) => React.ReactNode;
     searchable?: boolean;
     sortable?: boolean;
@@ -59,6 +59,10 @@ interface EnhancedTableProps {
     icon?: React.ReactNode;
     variant?: "default" | "outline" | "destructive";
   }[];
+  // New props for selection
+  enableSelection?: boolean;
+  initialSelectedRowIds?: string[]; // For pre-selecting rows by ID
+  onSelectionChange?: (selectedRows: any[]) => void;
 }
 
 export default function EnhancedTable({
@@ -69,6 +73,9 @@ export default function EnhancedTable({
   emptyMessage = "No data found",
   onRowAction,
   actions = [],
+  enableSelection = false,
+  initialSelectedRowIds = [],
+  onSelectionChange,
 }: EnhancedTableProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [filters, setFilters] = useState<Record<string, any>>({});
@@ -77,12 +84,20 @@ export default function EnhancedTable({
     direction: "asc" | "desc";
   } | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(
+    new Set(initialSelectedRowIds)
+  );
+
+  // Update selectedRowIds when initialSelectedRowIds changes
+  useEffect(() => {
+    setSelectedRowIds(new Set(initialSelectedRowIds));
+  }, [initialSelectedRowIds]);
 
   // Get searchable columns
   const searchableColumns = columns.filter((col) => col.searchable !== false);
 
   // Filter and search data
-  const filteredData = useMemo(() => {
+  const filteredAndSortedData = useMemo(() => {
     let result = [...data];
 
     // Apply search
@@ -92,6 +107,25 @@ export default function EnhancedTable({
         searchableColumns.some((col) => {
           const value = row[col.key];
           if (value == null) return false;
+          // Handle nested keys for search if present
+          if (col.key.includes(".")) {
+            const keys = col.key.split(".");
+            let nestedValue = row;
+            for (const k of keys) {
+              if (
+                nestedValue &&
+                typeof nestedValue === "object" &&
+                k in nestedValue
+              ) {
+                nestedValue = nestedValue[k];
+              } else {
+                nestedValue = undefined;
+                break;
+              }
+            }
+            if (nestedValue == null) return false;
+            return String(nestedValue).toLowerCase().includes(searchLower);
+          }
           return String(value).toLowerCase().includes(searchLower);
         })
       );
@@ -109,7 +143,25 @@ export default function EnhancedTable({
       if (!filterOption) return;
 
       result = result.filter((row) => {
-        const rowValue = row[filterKey];
+        // Handle nested keys for filtering
+        let rowValue = row[filterKey];
+        if (filterKey.includes(".")) {
+          const keys = filterKey.split(".");
+          let nestedValue = row;
+          for (const k of keys) {
+            if (
+              nestedValue &&
+              typeof nestedValue === "object" &&
+              k in nestedValue
+            ) {
+              nestedValue = nestedValue[k];
+            } else {
+              nestedValue = undefined;
+              break;
+            }
+          }
+          rowValue = nestedValue;
+        }
 
         switch (filterOption.type) {
           case "select":
@@ -131,8 +183,31 @@ export default function EnhancedTable({
     // Apply sorting
     if (sortConfig) {
       result.sort((a, b) => {
-        const aValue = a[sortConfig.key];
-        const bValue = b[sortConfig.key];
+        let aValue = a[sortConfig.key];
+        let bValue = b[sortConfig.key];
+
+        // Handle nested keys for sorting
+        if (sortConfig.key.includes(".")) {
+          const keys = sortConfig.key.split(".");
+          let nestedA = a;
+          let nestedB = b;
+          for (const k of keys) {
+            if (nestedA && typeof nestedA === "object" && k in nestedA) {
+              nestedA = nestedA[k];
+            } else {
+              nestedA = undefined;
+              break;
+            }
+            if (nestedB && typeof nestedB === "object" && k in nestedB) {
+              nestedB = nestedB[k];
+            } else {
+              nestedB = undefined;
+              break;
+            }
+          }
+          aValue = nestedA;
+          bValue = nestedB;
+        }
 
         if (aValue < bValue) return sortConfig.direction === "asc" ? -1 : 1;
         if (aValue > bValue) return sortConfig.direction === "asc" ? 1 : -1;
@@ -142,6 +217,21 @@ export default function EnhancedTable({
 
     return result;
   }, [data, searchTerm, filters, sortConfig, searchableColumns, filterOptions]);
+
+  // Call onSelectionChange when selectedRowIds or filteredAndSortedData changes
+  useEffect(() => {
+    if (enableSelection && onSelectionChange) {
+      const selectedRows = filteredAndSortedData.filter((row) =>
+        selectedRowIds.has(row.id)
+      );
+      onSelectionChange(selectedRows);
+    }
+  }, [
+    selectedRowIds,
+    filteredAndSortedData,
+    enableSelection,
+    onSelectionChange,
+  ]);
 
   const handleSort = (key: string) => {
     const column = columns.find((col) => col.key === key);
@@ -178,6 +268,69 @@ export default function EnhancedTable({
     if (!sortConfig || sortConfig.key !== key) return "↕️";
     return sortConfig.direction === "asc" ? "↑" : "↓";
   };
+
+  // Handle row selection
+  const handleToggleRowSelection = (rowId: string, checked: boolean) => {
+    setSelectedRowIds((prev) => {
+      const newSelection = new Set(prev);
+      if (checked) {
+        newSelection.add(rowId);
+      } else {
+        newSelection.delete(rowId);
+      }
+      return newSelection;
+    });
+  };
+
+  const handleToggleAllRowsSelection = (checked: boolean) => {
+    setSelectedRowIds((prev) => {
+      const newSelection = new Set(prev);
+      if (checked) {
+        filteredAndSortedData.forEach((row) => newSelection.add(row.id));
+      } else {
+        filteredAndSortedData.forEach((row) => newSelection.delete(row.id));
+      }
+      return newSelection;
+    });
+  };
+
+  const isAllRowsSelected = useMemo(() => {
+    if (!enableSelection || filteredAndSortedData.length === 0) return false;
+    return filteredAndSortedData.every((row) => selectedRowIds.has(row.id));
+  }, [enableSelection, filteredAndSortedData, selectedRowIds]);
+
+  // Columns to display, including the selection column if enabled
+  const displayColumns = useMemo(() => {
+    if (!enableSelection) {
+      return columns;
+    }
+    return [
+      {
+        key: "select",
+        label: (
+          <Checkbox
+            checked={isAllRowsSelected}
+            onCheckedChange={(value: boolean) =>
+              handleToggleAllRowsSelection(value)
+            }
+            aria-label="Select all"
+          />
+        ),
+        render: (value: any, row: any) => (
+          <Checkbox
+            checked={selectedRowIds.has(row.id)}
+            onCheckedChange={(value: boolean) =>
+              handleToggleRowSelection(row.id, value)
+            }
+            aria-label="Select row"
+          />
+        ),
+        sortable: false,
+        searchable: false,
+      },
+      ...columns,
+    ];
+  }, [columns, enableSelection, selectedRowIds, isAllRowsSelected]);
 
   return (
     <div className="space-y-4">
@@ -243,7 +396,10 @@ export default function EnhancedTable({
                         <Select
                           value={filters[option.key] || ""}
                           onValueChange={(value) =>
-                            handleFilterChange(option.key, value || undefined)
+                            handleFilterChange(
+                              option.key,
+                              value === "all" ? undefined : value
+                            )
                           }
                         >
                           <SelectTrigger>
@@ -347,7 +503,9 @@ export default function EnhancedTable({
                           onValueChange={(value) =>
                             handleFilterChange(
                               option.key,
-                              value === "" ? undefined : value === "true"
+                              value === "" || value === "all"
+                                ? undefined
+                                : value === "true"
                             )
                           }
                         >
@@ -401,6 +559,8 @@ export default function EnhancedTable({
                 value;
             } else if (option.type === "range" && Array.isArray(value)) {
               displayValue = `${value[0]} - ${value[1]}`;
+            } else if (option.type === "boolean") {
+              displayValue = value ? "Yes" : "No";
             }
 
             return (
@@ -423,10 +583,10 @@ export default function EnhancedTable({
       {/* Results Summary */}
       <div className="flex justify-between items-center text-sm text-gray-600">
         <span>
-          Showing {filteredData.length} of {data.length} records
+          Showing {filteredAndSortedData.length} of {data.length} records
           {searchTerm && ` for "${searchTerm}"`}
         </span>
-        {filteredData.length !== data.length && (
+        {filteredAndSortedData.length !== data.length && (
           <Button
             variant="link"
             size="sm"
@@ -441,7 +601,7 @@ export default function EnhancedTable({
       {/* Table */}
       <Card>
         <CardContent className="p-0">
-          {filteredData.length === 0 ? (
+          {filteredAndSortedData.length === 0 ? (
             <div className="text-center py-12 text-gray-500">
               <Filter className="h-12 w-12 mx-auto mb-4 opacity-50" />
               <h3 className="text-lg font-medium mb-2">
@@ -463,12 +623,12 @@ export default function EnhancedTable({
               <Table>
                 <TableHeader>
                   <TableRow>
-                    {columns.map((column) => (
+                    {displayColumns.map((column) => (
                       <TableHead
                         key={column.key}
                         className={
                           column.sortable !== false
-                            ? "cursor-pointer hover:bg-muted select-none"
+                            ? "cursor-pointer hover:bg-gray-50"
                             : ""
                         }
                         onClick={() =>
@@ -476,7 +636,9 @@ export default function EnhancedTable({
                         }
                       >
                         <div className="flex items-center gap-2">
-                          {column.label}
+                          {typeof column.label === "string"
+                            ? column.label
+                            : column.label}
                           {column.sortable !== false && (
                             <span className="text-xs opacity-50">
                               {getSortIcon(column.key)}
@@ -491,12 +653,14 @@ export default function EnhancedTable({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredData.map((row, index) => (
+                  {filteredAndSortedData.map((row, index) => (
                     <TableRow key={row.id || index}>
-                      {columns.map((column) => (
+                      {displayColumns.map((column) => (
                         <TableCell key={column.key}>
                           {column.render
                             ? column.render(row[column.key], row)
+                            : column.key.includes(".")
+                            ? getNestedValue(row, column.key)
                             : row[column.key]}
                         </TableCell>
                       ))}
@@ -529,4 +693,9 @@ export default function EnhancedTable({
       </Card>
     </div>
   );
+}
+
+// Helper function to get nested value from an object
+function getNestedValue(obj: any, path: string) {
+  return path.split(".").reduce((acc, part) => acc && acc[part], obj);
 }

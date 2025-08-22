@@ -2,7 +2,7 @@
 
 import { ColumnDef } from "@tanstack/react-table";
 import { Room, RoomType } from "@prisma/client";
-import { deleteRoom } from "@/lib/actions";
+import { deleteRoom } from "@/lib/actions"; // Assuming this is your action for deleting rooms
 import { toast } from "sonner";
 import {
   DropdownMenu,
@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { MoreHorizontal } from "lucide-react";
+import { MoreHorizontal, ArrowUpDown } from "lucide-react"; // Import ArrowUpDown for sorting indication
 
 type GetColumnsProps = {
   onEdit: (room: Room) => void;
@@ -33,15 +33,45 @@ type GetColumnsProps = {
 export const getColumns = ({ onEdit }: GetColumnsProps): ColumnDef<Room>[] => [
   {
     accessorKey: "name",
-    header: "Name",
+    header: ({ column }) => {
+      return (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+        >
+          Name
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      );
+    },
   },
   {
     accessorKey: "building",
-    header: "Building",
+    header: ({ column }) => {
+      return (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+        >
+          Building
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      );
+    },
   },
   {
     accessorKey: "capacity",
-    header: "Capacity",
+    header: ({ column }) => {
+      return (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+        >
+          Capacity
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      );
+    },
   },
   {
     accessorKey: "type",
@@ -70,6 +100,9 @@ export const getColumns = ({ onEdit }: GetColumnsProps): ColumnDef<Room>[] => [
         const result = await deleteRoom({ id: room.id });
         if (result?.success) {
           toast.success(result.message);
+          // Assuming window.location.reload() or a similar mechanism
+          // is in place in client-page.tsx to refetch data after delete.
+          // For a more integrated approach, you might need a state update mechanism.
         } else {
           toast.error(result?.message || "Failed to delete room.");
         }

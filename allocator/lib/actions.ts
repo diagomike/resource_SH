@@ -865,6 +865,58 @@ export async function getAllScheduleInstances() {
 }
 
 /**
+ * Fetches all data required for the schedule instance dashboard.
+ * This includes the schedule itself, its currently assigned resources,
+ * and a complete list of all available resources (courses, sections, etc.)
+ * for the assignment tables.
+ */
+export async function getScheduleInstanceDetails(id: string) {
+  // Use Promise.all to fetch all data concurrently for better performance
+  const [scheduleInstance, allCourses, allPersonnel, allRooms, allSections] =
+    await Promise.all([
+      // Fetch the specific schedule instance with its currently linked resources
+      prisma.scheduleInstance.findUnique({
+        where: { id },
+        include: {
+          courses: true,
+          personnel: true,
+          rooms: true,
+          sections: true,
+        },
+      }),
+      // Fetch all available courses
+      prisma.course.findMany({ orderBy: { code: "asc" } }),
+      // Fetch all available users (personnel)
+      prisma.user.findMany({ orderBy: { name: "asc" } }),
+      // Fetch all available rooms
+      prisma.room.findMany({ orderBy: { name: "asc" } }),
+      // Fetch all available sections, including their parent batch and program for context
+      prisma.section.findMany({
+        include: {
+          batch: {
+            include: {
+              program: true,
+            },
+          },
+        },
+        orderBy: { name: "asc" },
+      }),
+    ]);
+
+  if (!scheduleInstance) {
+    return null; // Or throw an error
+  }
+
+  return {
+    scheduleInstance,
+    allCourses,
+    allPersonnel,
+    allRooms,
+    allSections,
+  };
+}
+
+/**
  * Fetches a single ScheduleInstance by ID with all its related data.
  */
 export async function getScheduleInstanceById(id: string) {
