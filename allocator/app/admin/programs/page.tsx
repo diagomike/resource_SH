@@ -1,8 +1,8 @@
-import { getProgramsWithChildren } from "@/lib/actions";
+import { getAllProgramsWithChildren } from "@/lib/actions";
 import { ProgramStructureClient } from "./_components/program-structure-client";
 
 export default async function ProgramsPage() {
-  const programs = await getProgramsWithChildren();
+  const programs = await getAllProgramsWithChildren();
 
   return (
     <div className="container mx-auto py-10">

@@ -11,15 +11,15 @@ export const idSchema = z.object({ id: z.string() });
 
 // --- Course & ActivityTemplate Schemas ---
 const requiredPersonnelSchema = z.object({
-  role: z.enum(Role),
+  role: z.nativeEnum(Role),
   count: z.number().int().min(1),
 });
 
 const activityTemplateSchema = z.object({
   title: z.string().min(3),
   durationMinutes: z.number().int().positive(),
-  attendeeLevel: z.enum(AttendeeLevel),
-  requiredRoomType: z.enum(RoomType),
+  attendeeLevel: z.nativeEnum(AttendeeLevel),
+  requiredRoomType: z.nativeEnum(RoomType),
   requiredPersonnel: z.array(requiredPersonnelSchema).min(1),
 });
 
@@ -39,7 +39,7 @@ export const updateCourseSchema = z.object({
 export const userSchema = z.object({
   name: z.string().min(2),
   email: z.string().email(),
-  roles: z.array(z.enum(Role)).min(1),
+  roles: z.array(z.nativeEnum(Role)).min(1),
 });
 
 export const updateUserSchema = userSchema.extend({
@@ -51,34 +51,88 @@ export const roomSchema = z.object({
   name: z.string().min(3),
   building: z.string().min(2),
   capacity: z.number().int().positive(),
-  type: z.enum(RoomType),
+  type: z.nativeEnum(RoomType),
 });
 
 export const updateRoomSchema = roomSchema.extend({
   id: z.string(),
 });
 
-// --- Attendee Structure Schemas ---
+// --- Attendee Structure Schemas (Single Creation) ---
 export const programSchema = z.object({ name: z.string().min(5) });
-export const updateProgramSchema = programSchema.extend({ id: z.string() });
-
 export const batchSchema = z.object({
   name: z.string().min(3),
   programId: z.string(),
 });
-export const updateBatchSchema = batchSchema.extend({ id: z.string() });
-
 export const sectionSchema = z.object({
   name: z.string().min(1),
   batchId: z.string(),
 });
-export const updateSectionSchema = sectionSchema.extend({ id: z.string() });
-
 export const groupSchema = z.object({
   name: z.string().min(1),
   sectionId: z.string(),
 });
-export const updateGroupSchema = groupSchema.extend({ id: z.string() });
+
+// --- Schemas for Bulk Program/Sub-level Creation ---
+
+// For the main bulk program creator
+const bulkGroupSchema = z.object({
+  name: z.string().min(1, "Group name is required."),
+});
+
+const bulkSectionSchema = z.object({
+  name: z.string().min(1, "Section name is required."),
+  groups: z
+    .array(bulkGroupSchema)
+    .min(1, "At least one group is required per section."),
+});
+
+const bulkBatchSchema = z.object({
+  name: z.string().min(3, "Batch name must be at least 3 characters."),
+  sections: z
+    .array(bulkSectionSchema)
+    .min(1, "At least one section is required per batch."),
+});
+
+export const bulkProgramSchema = z.object({
+  name: z.string().min(5, "Program name must be at least 5 characters."),
+  batches: z.array(bulkBatchSchema).min(1, "At least one batch is required."),
+});
+
+// For creating multiple groups under one section
+export const bulkCreateGroupsSchema = z.object({
+  sectionId: z.string(),
+  groups: z
+    .array(z.object({ name: z.string().min(1, "Group name is required.") }))
+    .min(1, "At least one group is required."),
+});
+
+// For creating one section with optional multiple groups
+export const createSectionWithGroupsSchema = z.object({
+  batchId: z.string(),
+  name: z.string().min(1, "Section name is required."),
+  groups: z
+    .array(z.object({ name: z.string().min(1, "Group name is required.") }))
+    .optional(), // Groups are optional
+});
+
+// For creating one batch with optional multiple sections (and their groups)
+export const createBatchWithSectionsSchema = z.object({
+  programId: z.string(),
+  name: z.string().min(3, "Batch name must be at least 3 characters."),
+  sections: z
+    .array(
+      z.object({
+        name: z.string().min(1, "Section name is required."),
+        groups: z
+          .array(
+            z.object({ name: z.string().min(1, "Group name is required.") })
+          )
+          .min(1, "At least one group is required per section."),
+      })
+    )
+    .optional(), // Sections are optional
+});
 
 // --- ScheduleInstance Schema ---
 export const createScheduleInstanceSchema = z.object({

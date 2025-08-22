@@ -7,8 +7,12 @@ import { revalidatePath } from "next/cache";
 import {
   assignResourcesSchema,
   batchSchema,
+  bulkCreateGroupsSchema,
+  bulkProgramSchema,
+  createBatchWithSectionsSchema,
   createCourseSchema,
   createScheduleInstanceSchema,
+  createSectionWithGroupsSchema,
   groupSchema,
   idSchema,
   preferencesSchema,
@@ -426,6 +430,21 @@ export async function createProgram(
 }
 
 /**
+ * Deletes a Program.
+ */
+export async function deleteProgram(
+  input: z.infer<typeof idSchema>
+): Promise<ActionResponse<any>> {
+  try {
+    await prisma.program.delete({ where: { id: input.id } });
+    revalidatePath("/admin/programs");
+    return { success: true, message: "Program deleted successfully." };
+  } catch (e: any) {
+    return { success: false, message: "Failed to delete program." };
+  }
+}
+
+/**
  * Creates a new Batch.
  */
 export async function createBatch(
@@ -449,6 +468,21 @@ export async function createBatch(
     };
   } catch (e: any) {
     return { success: false, message: "Failed to create batch." };
+  }
+}
+
+/**
+ * Deletes a Batch.
+ */
+export async function deleteBatch(
+  input: z.infer<typeof idSchema>
+): Promise<ActionResponse<any>> {
+  try {
+    await prisma.batch.delete({ where: { id: input.id } });
+    revalidatePath("/admin/programs");
+    return { success: true, message: "Batch deleted successfully." };
+  } catch (e: any) {
+    return { success: false, message: "Failed to delete batch." };
   }
 }
 
@@ -480,6 +514,21 @@ export async function createSection(
 }
 
 /**
+ * Deletes a Section.
+ */
+export async function deleteSection(
+  input: z.infer<typeof idSchema>
+): Promise<ActionResponse<any>> {
+  try {
+    await prisma.section.delete({ where: { id: input.id } });
+    revalidatePath("/admin/programs");
+    return { success: true, message: "Section deleted successfully." };
+  } catch (e: any) {
+    return { success: false, message: "Failed to delete section." };
+  }
+}
+
+/**
  * Creates a new Group.
  */
 export async function createGroup(
@@ -503,6 +552,247 @@ export async function createGroup(
     };
   } catch (e) {
     return { success: false, message: "Failed to create group." };
+  }
+}
+
+/**
+ * Deletes a Group.
+ */
+export async function deleteGroup(
+  input: z.infer<typeof idSchema>
+): Promise<ActionResponse<any>> {
+  try {
+    await prisma.group.delete({ where: { id: input.id } });
+    revalidatePath("/admin/programs");
+    return { success: true, message: "Group deleted successfully." };
+  } catch (e: any) {
+    return { success: false, message: "Failed to delete group." };
+  }
+}
+
+/**
+ * Creates a new Program with its entire nested structure (Batches, Sections, Groups) in a single transaction.
+ */
+export async function bulkCreateProgram(
+  input: z.infer<typeof bulkProgramSchema>
+): Promise<ActionResponse<any>> {
+  const validation = bulkProgramSchema.safeParse(input);
+  if (!validation.success) {
+    // Flatten errors to make them easier to display on the form
+    const flatErrors = validation.error.flatten();
+    const firstErrorMessage = Object.values(flatErrors.fieldErrors)?.[0]?.[0];
+
+    return {
+      success: false,
+      message: firstErrorMessage || "Invalid input",
+      validationErrors: flatErrors.fieldErrors,
+    };
+  }
+
+  const { name, batches } = validation.data;
+
+  try {
+    // Check for existing program name to provide a cleaner error message
+    const existingProgram = await prisma.program.findUnique({
+      where: { name },
+    });
+    if (existingProgram) {
+      return {
+        success: false,
+        message: `A program named '${name}' already exists.`,
+      };
+    }
+
+    // Use a transaction to ensure all or nothing is created
+    await prisma.$transaction(async (tx) => {
+      // 1. Create the Program
+      const newProgram = await tx.program.create({
+        data: { name },
+      });
+
+      // 2. Loop through and create Batches and their children
+      for (const batchData of batches) {
+        const newBatch = await tx.batch.create({
+          data: {
+            name: batchData.name,
+            programId: newProgram.id,
+          },
+        });
+
+        // 3. Loop through and create Sections and their children
+        for (const sectionData of batchData.sections) {
+          const newSection = await tx.section.create({
+            data: {
+              name: sectionData.name,
+              batchId: newBatch.id,
+            },
+          });
+
+          // 4. Create all Groups for the current section
+          if (sectionData.groups.length > 0) {
+            await tx.group.createMany({
+              data: sectionData.groups.map((groupData) => ({
+                name: groupData.name,
+                sectionId: newSection.id,
+              })),
+            });
+          }
+        }
+      }
+    });
+
+    revalidatePath("/admin/programs");
+    return {
+      success: true,
+      message: `Program '${name}' and its structure created successfully.`,
+    };
+  } catch (e: any) {
+    console.error("Bulk create program failed:", e);
+    // Handle potential race condition if name was created after our initial check
+    if (e.code === "P2002") {
+      return {
+        success: false,
+        message: `A program named '${name}' already exists.`,
+      };
+    }
+    return {
+      success: false,
+      message:
+        "An unexpected error occurred. Failed to create the program structure.",
+    };
+  }
+}
+
+/**
+ * Creates multiple new Groups under a single Section.
+ */
+export async function bulkCreateGroups(
+  input: z.infer<typeof bulkCreateGroupsSchema>
+): Promise<ActionResponse<any>> {
+  const validation = bulkCreateGroupsSchema.safeParse(input);
+  if (!validation.success) {
+    return {
+      success: false,
+      message: "Invalid input",
+      validationErrors: validation.error.flatten().fieldErrors,
+    };
+  }
+
+  const { sectionId, groups } = validation.data;
+
+  try {
+    const result = await prisma.group.createMany({
+      data: groups.map((group) => ({ ...group, sectionId })),
+    });
+    revalidatePath("/admin/programs");
+    return {
+      success: true,
+      message: `Successfully created ${result.count} groups.`,
+    };
+  } catch (e) {
+    console.error("Bulk create groups failed:", e);
+    return { success: false, message: "Failed to create groups." };
+  }
+}
+
+/**
+ * Creates a new Section and optionally multiple Groups under it in a transaction.
+ */
+export async function createSectionWithGroups(
+  input: z.infer<typeof createSectionWithGroupsSchema>
+): Promise<ActionResponse<any>> {
+  const validation = createSectionWithGroupsSchema.safeParse(input);
+  if (!validation.success) {
+    return {
+      success: false,
+      message: "Invalid input",
+      validationErrors: validation.error.flatten().fieldErrors,
+    };
+  }
+
+  const { batchId, name, groups } = validation.data;
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      const newSection = await tx.section.create({
+        data: { name, batchId },
+      });
+
+      if (groups && groups.length > 0) {
+        await tx.group.createMany({
+          data: groups.map((group) => ({
+            name: group.name,
+            sectionId: newSection.id,
+          })),
+        });
+      }
+    });
+
+    revalidatePath("/admin/programs");
+    return {
+      success: true,
+      message: `Section '${name}' and ${
+        groups?.length || 0
+      } groups created successfully.`,
+    };
+  } catch (e) {
+    console.error("Create section with groups failed:", e);
+    return { success: false, message: "Failed to create section structure." };
+  }
+}
+
+/**
+ * Creates a new Batch and optionally multiple Sections (with Groups) under it in a transaction.
+ */
+export async function createBatchWithSections(
+  input: z.infer<typeof createBatchWithSectionsSchema>
+): Promise<ActionResponse<any>> {
+  const validation = createBatchWithSectionsSchema.safeParse(input);
+  if (!validation.success) {
+    return {
+      success: false,
+      message: "Invalid input",
+      validationErrors: validation.error.flatten().fieldErrors,
+    };
+  }
+
+  const { programId, name, sections } = validation.data;
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      const newBatch = await tx.batch.create({
+        data: { name, programId },
+      });
+
+      if (sections && sections.length > 0) {
+        for (const sectionData of sections) {
+          const newSection = await tx.section.create({
+            data: {
+              name: sectionData.name,
+              batchId: newBatch.id,
+            },
+          });
+
+          if (sectionData.groups && sectionData.groups.length > 0) {
+            await tx.group.createMany({
+              data: sectionData.groups.map((groupData) => ({
+                name: groupData.name,
+                sectionId: newSection.id,
+              })),
+            });
+          }
+        }
+      }
+    });
+
+    revalidatePath("/admin/programs");
+    return {
+      success: true,
+      message: `Batch '${name}' and its structure created successfully.`,
+    };
+  } catch (e) {
+    console.error("Create batch with sections failed:", e);
+    return { success: false, message: "Failed to create batch structure." };
   }
 }
 

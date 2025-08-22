@@ -1,10 +1,11 @@
 "use client";
 
-import { useForm } from "react-hook-form";
+import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
-import { createGroup } from "@/lib/actions";
+import { bulkCreateGroups } from "@/lib/actions";
+import { bulkCreateGroupsSchema } from "@/lib/schemas";
 import {
   Form,
   FormControl,
@@ -15,11 +16,9 @@ import {
 } from "@/components/ui/form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PlusCircle, Trash2 } from "lucide-react";
 
-const groupFormSchema = z.object({
-  name: z.string().min(2, "Group name must be at least 2 characters."),
-  sectionId: z.string(),
-});
+type GroupFormValues = z.infer<typeof bulkCreateGroupsSchema>;
 
 type GroupFormProps = {
   sectionId: string;
@@ -27,22 +26,27 @@ type GroupFormProps = {
 };
 
 export function GroupForm({ sectionId, onSuccess }: GroupFormProps) {
-  const form = useForm<z.infer<typeof groupFormSchema>>({
-    resolver: zodResolver(groupFormSchema),
+  const form = useForm<GroupFormValues>({
+    resolver: zodResolver(bulkCreateGroupsSchema),
     defaultValues: {
-      name: "",
       sectionId: sectionId,
+      groups: [{ name: "" }],
     },
   });
 
-  const onSubmit = async (values: z.infer<typeof groupFormSchema>) => {
+  const { fields, append, remove } = useFieldArray({
+    control: form.control,
+    name: "groups",
+  });
+
+  const onSubmit = async (values: GroupFormValues) => {
     try {
-      const result = await createGroup(values);
+      const result = await bulkCreateGroups(values);
       if (result?.success) {
         toast.success(result.message);
         onSuccess();
       } else {
-        toast.error(result?.message || "Failed to create group.");
+        toast.error(result?.message || "Failed to create groups.");
       }
     } catch (error) {
       toast.error("An unexpected error occurred.");
@@ -52,21 +56,50 @@ export function GroupForm({ sectionId, onSuccess }: GroupFormProps) {
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-        <FormField
-          control={form.control}
-          name="name"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Group Name</FormLabel>
-              <FormControl>
-                <Input {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+        <div className="space-y-2 max-h-60 overflow-y-auto p-1">
+          {fields.map((field, index) => (
+            <FormField
+              key={field.id}
+              control={form.control}
+              name={`groups.${index}.name`}
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="sr-only">Group Name</FormLabel>
+                  <div className="flex items-center gap-2">
+                    <FormControl>
+                      <Input
+                        {...field}
+                        placeholder={`Group ${index + 1} Name`}
+                      />
+                    </FormControl>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => remove(index)}
+                      disabled={fields.length <= 1}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          ))}
+        </div>
+
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => append({ name: "" })}
+        >
+          <PlusCircle className="mr-2 h-4 w-4" /> Add Another Group
+        </Button>
+
         <Button type="submit" className="w-full">
-          Create Group
+          Create Groups
         </Button>
       </form>
     </Form>
