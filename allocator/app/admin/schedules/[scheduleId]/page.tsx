@@ -30,7 +30,7 @@ export default async function ScheduleDashboardPage({
         <div className="mb-2">
           <Link
             href="/admin/schedules"
-            className="text-sm text-blue-600 hover:underline flex items-center"
+            className="text-sm hover:underline flex items-center"
           >
             ← Back to schedules
           </Link>

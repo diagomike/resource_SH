@@ -64,9 +64,10 @@ type RequiredPersonnel {
 // ---------------------------------------------------
 
 model User {
-  id    String @id @default(auto()) @map("_id") @db.ObjectId
-  name  String
-  email String @unique
+  id              String @id @default(auto()) @map("_id") @db.ObjectId
+  name            String
+  email           String @unique
+  preferenceToken String @unique @default(cuid())
 
   roles Role[]
 

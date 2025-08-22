@@ -42,6 +42,9 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  Link2, // Import the Link2 icon
+  Mail, // Import Mail icon for emailing
+  Download, // Import Download icon for export
 } from "lucide-react";
 import {
   Select,
@@ -51,9 +54,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+// Import the new server action for emailing
+import { sendPreferenceEmail } from "@/lib/emailActions";
+
+// The User type from Prisma will now include the preferenceToken
+type UserWithToken = User & { preferenceToken: string | null };
+
 interface PersonnelAssignmentTabProps {
-  scheduleInstance: ScheduleInstance & { personnel: User[] };
-  allPersonnel: User[];
+  scheduleInstance: ScheduleInstance & { personnel: UserWithToken[] };
+  allPersonnel: UserWithToken[];
 }
 
 export function PersonnelAssignmentTab({
@@ -73,6 +82,8 @@ export function PersonnelAssignmentTab({
     }
   );
   const [isSaving, setIsSaving] = useState(false);
+  const [isExporting, setIsExporting] = useState(false); // New state for export loading
+  const [isSendingEmails, setIsSendingEmails] = useState(false); // New state for email loading
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
@@ -81,7 +92,29 @@ export function PersonnelAssignmentTab({
     pageSize: 10,
   });
 
-  const columns: ColumnDef<User>[] = useMemo(
+  // Function to handle copying the preference link
+  const handleCopyLink = (token: string | null) => {
+    if (!token) {
+      toast.error("This user does not have a preference token.");
+      return;
+    }
+    const url = `${window.location.origin}/preferences/${scheduleInstance.id}?token=${token}`;
+    // Using document.execCommand('copy') for better iframe compatibility
+    try {
+      const el = document.createElement("textarea");
+      el.value = url;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand("copy");
+      document.body.removeChild(el);
+      toast.success("Preference link copied to clipboard!");
+    } catch (err) {
+      toast.error("Failed to copy link.");
+      console.error("Could not copy text: ", err);
+    }
+  };
+
+  const columns: ColumnDef<UserWithToken>[] = useMemo(
     () => [
       {
         id: "select",
@@ -145,8 +178,31 @@ export function PersonnelAssignmentTab({
           return filterValue.some((role: string) => roles.includes(role));
         },
       },
+      {
+        id: "actions",
+        header: "Actions",
+        cell: ({ row }) => {
+          const user = row.original;
+          // Only show the button if the user is currently selected/assigned
+          if (row.getIsSelected()) {
+            return (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleCopyLink(user.preferenceToken)}
+              >
+                <Link2 className="mr-2 h-4 w-4" />
+                Copy Link
+              </Button>
+            );
+          }
+          return null;
+        },
+        enableColumnFilter: false,
+        enableSorting: false,
+      },
     ],
-    []
+    [scheduleInstance.id, rowSelection]
   );
 
   const table = useReactTable({
@@ -207,13 +263,140 @@ export function PersonnelAssignmentTab({
     setIsSaving(false);
   };
 
+  const handleExportPreferenceLinks = () => {
+    setIsExporting(true);
+    try {
+      const selectedPersonnel = table
+        .getFilteredSelectedRowModel()
+        .rows.map((row) => row.original);
+
+      if (selectedPersonnel.length === 0) {
+        toast.info("No personnel selected for export.");
+        setIsExporting(false);
+        return;
+      }
+
+      const csvRows = [];
+      csvRows.push("Name,Email,Preference Link"); // CSV Header
+
+      for (const user of selectedPersonnel) {
+        if (user.preferenceToken) {
+          const preferenceLink = `${window.location.origin}/preferences/${scheduleInstance.id}?token=${user.preferenceToken}`;
+          csvRows.push(`"${user.name}","${user.email}","${preferenceLink}"`);
+        } else {
+          csvRows.push(
+            `"${user.name}","${user.email}","No preference token available"`
+          );
+        }
+      }
+
+      const csvString = csvRows.join("\n");
+      const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.setAttribute(
+        "download",
+        `preference_links_${scheduleInstance.id}.csv`
+      );
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      toast.success("Preference links exported successfully!");
+    } catch (error) {
+      console.error("Error exporting preference links:", error);
+      toast.error("Failed to export preference links.");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleEmailPreferenceLinks = async () => {
+    setIsSendingEmails(true);
+    const selectedPersonnel = table
+      .getFilteredSelectedRowModel()
+      .rows.map((row) => row.original);
+
+    if (selectedPersonnel.length === 0) {
+      toast.info("No personnel selected to email.");
+      setIsSendingEmails(false);
+      return;
+    }
+
+    let successfulEmails = 0;
+    let failedEmails = 0;
+
+    for (const user of selectedPersonnel) {
+      if (user.email && user.preferenceToken) {
+        try {
+          const result = await sendPreferenceEmail({
+            scheduleInstanceId: scheduleInstance.id,
+            personnelId: user.id,
+            email: user.email,
+            preferenceToken: user.preferenceToken,
+            userName: user.name,
+          });
+
+          if (result.success) {
+            successfulEmails++;
+            toast.success(`Sent Email to ${user.name}`);
+          } else {
+            failedEmails++;
+            toast.error(`Failed to email ${user.name}: ${result.message}`);
+          }
+        } catch (error) {
+          failedEmails++;
+          console.error(`Error sending email to ${user.name}:`, error);
+          toast.error(`Error sending email to ${user.name}`);
+        }
+      } else {
+        failedEmails++;
+        toast.warning(
+          `Skipping email for ${user.name}: Missing email or preference token.`
+        );
+      }
+    }
+
+    if (successfulEmails > 0) {
+      toast.success(
+        `${successfulEmails} preference links emailed successfully!`
+      );
+    }
+    if (failedEmails > 0) {
+      toast.error(`${failedEmails} preference links failed to send.`);
+    }
+
+    setIsSendingEmails(false);
+    toast.success(`Email Sending Process Completed!`);
+  };
+
   return (
     <Card className="rounded-xl shadow-lg">
       <CardHeader className="rounded-t-xl">
-        <CardTitle className="text-3xl font-bold flex items-center gap-3">
-          <SlidersHorizontal className="h-7 w-7" />
-          Assign Personnel
-        </CardTitle>
+        <div className="flex justify-between items-center mb-4">
+          <CardTitle className="text-3xl font-bold flex items-center gap-3">
+            <SlidersHorizontal className="h-7 w-7" />
+            Assign Personnel
+          </CardTitle>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={handleExportPreferenceLinks}
+              disabled={isExporting}
+              className="rounded-lg shadow-sm transition-all duration-200"
+            >
+              <Download className="mr-2 h-4 w-4" />
+              {isExporting ? "Exporting..." : "Export Preference Links"}
+            </Button>
+            <Button
+              onClick={handleEmailPreferenceLinks}
+              disabled={isSendingEmails}
+              className="rounded-lg shadow-sm transition-all duration-200"
+            >
+              <Mail className="mr-2 h-4 w-4" />
+              {isSendingEmails ? "Sending Emails..." : "Email Personnel Links"}
+            </Button>
+          </div>
+        </div>
       </CardHeader>
       <CardContent className="space-y-6">
         <div className="flex flex-col sm:flex-row items-center gap-4 mb-4">

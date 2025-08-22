@@ -44,7 +44,7 @@ export function ResourceAssignmentClient({
   allSections,
 }: ResourceAssignmentClientProps) {
   return (
-    <Tabs defaultValue="preivew">
+    <Tabs defaultValue="preview">
       <TabsList className="grid w-full grid-cols-5">
         <TabsTrigger value="preview">Preview</TabsTrigger>
         <TabsTrigger value="courses">Courses</TabsTrigger>
