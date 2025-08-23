@@ -59,6 +59,13 @@ type RequiredPersonnel {
   count Int
 }
 
+// ADD THIS NEW COMPOSITE TYPE
+type AvailabilityBlock {
+  dayOfWeek DayOfWeek
+  startTime String // "08:00"
+  endTime   String // "17:00"
+}
+
 // ---------------------------------------------------
 // CORE RESOURCES - The fundamental building blocks
 // ---------------------------------------------------
@@ -179,6 +186,13 @@ model ActivityTemplate {
   scheduledEvents ScheduledEvent[]
 }
 
+model AvailabilityTemplate {
+  id                String              @id @default(auto()) @map("_id") @db.ObjectId
+  name              String              @unique
+  availableSlots    AvailabilityBlock[]
+  scheduleInstances ScheduleInstance[]
+}
+
 // ---------------------------------------------------
 // SCHEDULING CONTEXT & OUTPUT
 // ---------------------------------------------------
@@ -191,6 +205,10 @@ model ScheduleInstance {
   status    ScheduleStatus @default(DRAFT)
 
   // Many-to-Many relations defining the scope of this schedule
+
+  availabilityTemplate   AvailabilityTemplate @relation(fields: [availabilityTemplateId], references: [id])
+  availabilityTemplateId String               @db.ObjectId
+
   courseIds    String[]  @db.ObjectId
   courses      Course[]  @relation(fields: [courseIds], references: [id])
   sectionIds   String[]  @db.ObjectId

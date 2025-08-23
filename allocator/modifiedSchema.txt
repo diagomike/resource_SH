@@ -1,4 +1,5 @@
-// Prisma schema file,
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 generator client {
   provider = "prisma-client-js"
@@ -63,9 +64,10 @@ type RequiredPersonnel {
 // ---------------------------------------------------
 
 model User {
-  id    String @id @default(auto()) @map("_id") @db.ObjectId
-  name  String
-  email String @unique
+  id              String @id @default(auto()) @map("_id") @db.ObjectId
+  name            String
+  email           String @unique
+  preferenceToken String @unique @default(cuid())
 
   roles Role[]
 
@@ -249,8 +251,6 @@ model ScheduledEvent {
   scheduleInstance   ScheduleInstance @relation(fields: [scheduleInstanceId], references: [id])
   scheduleInstanceId String           @db.ObjectId
 }
-
-
 
 
 // File Hierarcy

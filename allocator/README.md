@@ -1,253 +1,579 @@
-Congratulations on completing all the administrative interfaces\! You have built a robust and comprehensive system for managing all the necessary data. This is a massive accomplishment.
+I doubt that there might be a mistake in the setup - am I wrong?
 
-You are now at the final and most exciting phase: **bringing the system to life**. This involves two major steps that transition from data entry to dynamic interaction and automated logic:
+to run allocation and generate a timetable - I see that there is a list of timeslots that are required by the optimization solver - but there is no explicit user interface or database model for defining available time slots - I think the scheduleInstance should be limited to these available timeslots and that we should create a new tab for defining these timeslots for every instance - the scheduledInstance model only includes startDate and endDate, but it does not have a field to specify the available time blocks within those dates. The Python solver needs this granular data to function
+let's fix this
 
-1.  **The Personnel Preference Portal**: A public-facing interface for personnel to submit their activity preferences.
-2.  **The Allocation Engine**: The core logic that takes all the data and preferences and generates the final, conflict-free timetable.
+-------------------------
+You are absolutely right to point this out. My apologies, that is a critical gap in the setup. Your intuition is spot on.
 
-Let's break down how to approach this final frontier.
+A `ScheduleInstance` with only a `startDate` and `endDate` is too vague. The Python solver needs a discrete, explicit list of which time slots are actually available for scheduling within that date range. For example, a university might only schedule classes from 8:00 AM to 6:00 PM on weekdays, with no classes during a lunch hour.
 
------
+Let's fix this by implementing the exact solution you proposed: adding a new model and a UI tab for defining the available time slots for each `ScheduleInstance`.
 
-### Part 1: The Personnel Preference Portal
+### Step 1: Update the Database Schema
 
-**Goal**: Create a simple, secure, and user-friendly page where lecturers and other personnel can rank the activities they are eligible for within a specific schedule.
+We'll add a way to store recurring weekly availability blocks directly on the `ScheduleInstance`. A Prisma composite type is perfect for this.
 
-#### How It Should Work
+**File:** `prisma/schema.prisma`
 
-An administrator, from the Schedule Dashboard (`/admin/schedules/[scheduleId]`), should be able to get a unique link for each assigned person. This link leads them to a page where they can drag-and-drop activities into their preferred order.
+1.  First, add a new composite type to define an availability block.
+2.  Then, add a list of these blocks to the `ScheduleInstance` model.
 
-#### Step 1: Generate Secure Links
+<!-- end list -->
 
-First, we need a way to securely identify personnel. A good approach is to use a token.
+```prisma
+// prisma/schema.prisma
 
-1.  **Update Your Schema**: Add a token field to the `User` model in `prisma/schema.prisma` to store a unique, secure identifier.
+// ... (keep all your other enums and types)
 
-    ```prisma
-    // prisma/schema.prisma
-    model User {
-      // ... existing fields
-      preferenceToken String @unique @default(cuid()) // Add this line
-    }
-    ```
+// ADD THIS NEW COMPOSITE TYPE
+type AvailabilityBlock {
+  dayOfWeek DayOfWeek
+  startTime String // "08:00"
+  endTime   String // "17:00"
+}
 
-    Run `npx prisma db push` to apply this change. `cuid()` generates a collision-resistant unique ID.
+// ... (keep all other models)
 
-2.  **Update the Admin UI**: In your Schedule Dashboard (`/admin/schedules/[scheduleId]`), add a "Personnel" tab. In that table, add a button for each person called "Copy Preference Link". The function for this button would generate a URL like: `/preferences/${scheduleId}?token=${user.preferenceToken}`.
+// UPDATE THE ScheduleInstance MODEL
+model ScheduleInstance {
+  id        String         @id @default(auto()) @map("_id") @db.ObjectId
+  name      String         @unique
+  startDate DateTime
+  endDate   DateTime
+  status    ScheduleStatus @default(DRAFT)
 
-#### Step 2: Build the Preference Page
+  // ADD THIS LINE
+  availableSlots AvailabilityBlock[]
 
-This is the page the unique link points to.
+  // ... (keep all the other fields and relations)
+}
+```
 
-**File Structure:**
+After adding this, run `npx prisma generate` to update your Prisma client with these new types. The `db push` command isn't needed as composite types don't change the underlying MongoDB schema structure.
 
-  * `app/preferences/[scheduleId]/page.tsx`
-  * `app/preferences/[scheduleId]/_components/preference-sorter-client.tsx`
+### Step 2: Build the UI for Managing Availability
 
-**File:** `app/preferences/[scheduleId]/page.tsx`
+Now, let's create the new "Availability" tab in the Schedule Dashboard.
+
+**File:** `app/admin/schedules/[scheduleId]/_components/availability-form.tsx` (Create this new file)
+
+This form will use `react-hook-form` and `useFieldArray` to let admins dynamically add, remove, and edit time blocks for each day of the week.
 
 ```tsx
-import { prisma } from "@/prisma/client";
-import { PreferenceSorterClient } from "./_components/preference-sorter-client";
-import { notFound } from "next/navigation";
+"use client";
 
-type PreferencesPageProps = {
-  params: { scheduleId: string };
-  searchParams: { token?: string };
+import { useForm, useFieldArray } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { toast } from "sonner";
+import { updateScheduleAvailability, availabilitySchema } from "@/lib/actions";
+import { FullScheduleInstance } from "@/lib/types";
+import { DayOfWeek } from "@prisma/client";
+import { Button } from "@/components/ui/button";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { PlusCircle, Trash2 } from "lucide-react";
+
+type AvailabilityFormProps = {
+  schedule: FullScheduleInstance;
 };
 
-// This Server Component acts as a secure data loader
-export default async function PreferencesPage({ params, searchParams }: PreferencesPageProps) {
-  const { scheduleId } = params;
-  const { token } = searchParams;
+// Generate an array of time options (e.g., "08:00", "08:30")
+const timeOptions = Array.from({ length: 48 }, (_, i) => {
+    const hours = Math.floor(i / 2);
+    const minutes = (i % 2) * 30;
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+});
 
-  if (!token) {
-    return notFound();
-  }
-
-  // 1. Find the user associated with the token
-  const user = await prisma.user.findUnique({ where: { preferenceToken: token } });
-  if (!user) {
-    return notFound();
-  }
-
-  // 2. Find the schedule and ensure this user is part of it
-  const schedule = await prisma.scheduleInstance.findFirst({
-    where: {
-      id: scheduleId,
-      personnel: { some: { id: user.id } },
-    },
-    include: {
-      courses: { include: { activityTemplates: true } },
-      preferences: { where: { personnelId: user.id } },
+export function AvailabilityForm({ schedule }: AvailabilityFormProps) {
+  const form = useForm<z.infer<typeof availabilitySchema>>({
+    resolver: zodResolver(availabilitySchema),
+    defaultValues: {
+      scheduleInstanceId: schedule.id,
+      availableSlots: schedule.availableSlots?.length > 0 ? schedule.availableSlots : [{
+        dayOfWeek: DayOfWeek.MONDAY,
+        startTime: "08:00",
+        endTime: "17:00",
+      }],
     },
   });
 
-  if (!schedule) {
-    return <div className="container mx-auto py-10">You are not assigned to this schedule.</div>;
-  }
+  const { fields, append, remove } = useFieldArray({
+    control: form.control,
+    name: "availableSlots",
+  });
 
-  // 3. Filter activities relevant to the user's roles
-  const availableActivities = schedule.courses.flatMap(course => 
-    course.activityTemplates.filter(template => 
-      template.requiredPersonnel.some(req => user.roles.includes(req.role))
-    ).map(template => ({ ...template, course })) // Add course info to template
-  );
+  const onSubmit = async (values: z.infer<typeof availabilitySchema>) => {
+    const result = await updateScheduleAvailability(values);
+    if (result.success) {
+      toast.success(result.message);
+    } else {
+      toast.error(result.message);
+    }
+  };
 
   return (
-    <div className="container mx-auto py-10">
-      <div className="text-center mb-8">
-        <h1 className="text-3xl font-bold">Set Your Preferences</h1>
-        <p className="text-muted-foreground">For schedule: {schedule.name}</p>
-        <p>Welcome, {user.name}. Please drag and drop the activities to rank them in your preferred order.</p>
-      </div>
-      <PreferenceSorterClient
-        personnelId={user.id}
-        scheduleInstanceId={schedule.id}
-        availableActivities={availableActivities}
-        existingPreferences={schedule.preferences}
-      />
-    </div>
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        <h3 className="text-lg font-semibold">Weekly Availability</h3>
+        <div className="space-y-4">
+          {fields.map((field, index) => (
+            <div key={field.id} className="flex items-end gap-4 p-4 border rounded-md">
+              <FormField
+                control={form.control}
+                name={`availableSlots.${index}.dayOfWeek`}
+                render={({ field }) => (
+                  <FormItem className="flex-1">
+                    <FormLabel>Day</FormLabel>
+                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                      <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                      <SelectContent>
+                        {Object.values(DayOfWeek).map(day => (
+                          <SelectItem key={day} value={day}>{day}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name={`availableSlots.${index}.startTime`}
+                render={({ field }) => (
+                  <FormItem className="flex-1">
+                    <FormLabel>Start Time</FormLabel>
+                     <FormControl><Input type="time" step="1800" {...field} /></FormControl>
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name={`availableSlots.${index}.endTime`}
+                render={({ field }) => (
+                  <FormItem className="flex-1">
+                    <FormLabel>End Time</FormLabel>
+                    <FormControl><Input type="time" step="1800" {...field} /></FormControl>
+                  </FormItem>
+                )}
+              />
+              <Button type="button" variant="destructive" size="icon" onClick={() => remove(index)}>
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
+          ))}
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={() => append({ dayOfWeek: DayOfWeek.MONDAY, startTime: '08:00', endTime: '17:00' })}>
+          <PlusCircle className="mr-2 h-4 w-4" /> Add Time Block
+        </Button>
+        <div className="pt-4">
+          <Button type="submit" disabled={form.formState.isSubmitting}>
+            {form.formState.isSubmitting ? "Saving..." : "Save Availability"}
+          </Button>
+        </div>
+      </form>
+    </Form>
   );
+}
+
+```
+
+### Step 3: Create the Server Action
+
+Add a new Zod schema and server action to `lib/actions.ts` to handle the form submission.
+
+**File:** `lib/actions.ts`
+
+```typescript
+// lib/actions.ts
+// ... (imports and other schemas)
+
+// ADD THIS NEW ZOD SCHEMA
+export const availabilitySchema = z.object({
+    scheduleInstanceId: z.string(),
+    availableSlots: z.array(z.object({
+        dayOfWeek: z.nativeEnum(DayOfWeek),
+        startTime: z.string().regex(/^\d{2}:\d{2}$/), // "HH:MM"
+        endTime: z.string().regex(/^\d{2}:\d{2}$/),
+    }))
+});
+
+// ADD THIS NEW SERVER ACTION
+export async function updateScheduleAvailability(
+    input: z.infer<typeof availabilitySchema>
+): Promise<ActionResponse<any>> {
+    const validation = availabilitySchema.safeParse(input);
+    if (!validation.success) {
+        return { success: false, message: "Invalid input." };
+    }
+    
+    const { scheduleInstanceId, availableSlots } = validation.data;
+
+    try {
+        await prisma.scheduleInstance.update({
+            where: { id: scheduleInstanceId },
+            data: {
+                availableSlots: availableSlots,
+            },
+        });
+        revalidatePath(`/admin/schedules/${scheduleInstanceId}`);
+        return { success: true, message: "Availability updated successfully." };
+    } catch (error) {
+        console.error(error);
+        return { success: false, message: "Failed to update availability." };
+    }
 }
 ```
 
-**Note:** The `PreferenceSorterClient` would be a client component that uses a drag-and-drop library (like `dnd-kit`) to manage the list and calls your `submitPreferences` server action on save.
+### Step 4: Update the Solver Data Preparation
+
+Finally, and most importantly, we update the `getScheduleDataForSolver` helper function to use this new, granular availability data. This function is called by your `triggerAllocation` action.
+
+**File:** `lib/actions.ts` (update/create this helper function)
+
+```typescript
+// lib/actions.ts
+
+// A helper function to convert "HH:MM" time to a slot index (0-47 for a full day)
+const timeToSlotIndex = (time: string): number => {
+    const [hours, minutes] = time.split(':').map(Number);
+    return hours * 2 + Math.floor(minutes / 30);
+};
+
+async function getScheduleDataForSolver(id: string) {
+    const schedule = await prisma.scheduleInstance.findUnique({
+        where: { id },
+        include: { /* ... include all necessary relations ... */ }
+    });
+
+    if (!schedule) throw new Error("Schedule not found");
+
+    // --- THIS IS THE CRITICAL CHANGE ---
+    // Generate the discrete time_slots array from the availability blocks
+    const dayOrder: DayOfWeek[] = [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY, DayOfWeek.SATURDAY, DayOfWeek.SUNDAY];
+    const slotsPerDay = 48; // 24 hours * 2 slots/hour
+    let time_slots: number[] = [];
+    const availableDays: string[] = [];
+    
+    dayOrder.forEach((day, dayIndex) => {
+        const blocksForDay = schedule.availableSlots.filter(s => s.dayOfWeek === day);
+        if (blocksForDay.length > 0) {
+            if (!availableDays.includes(day)) {
+                availableDays.push(day);
+            }
+            blocksForDay.forEach(block => {
+                const startSlot = timeToSlotIndex(block.startTime);
+                const endSlot = timeToSlotIndex(block.endTime);
+                for (let i = startSlot; i < endSlot; i++) {
+                    const globalSlotIndex = (dayIndex * slotsPerDay) + i;
+                    time_slots.push(globalSlotIndex);
+                }
+            });
+        }
+    });
+    // Remove duplicates and sort
+    time_slots = [...new Set(time_slots)].sort((a, b) => a - b);
+    
+    // ... (rest of the data preparation logic: format activities, personnel, etc.)
+    // For example:
+    const activities = schedule.courses.flatMap(c => c.activityTemplates.map(at => ({
+        id: at.id,
+        duration_slots: Math.ceil(at.durationMinutes / 30),
+        //...etc
+    })));
+
+
+    return {
+        activities,
+        personnel,
+        rooms,
+        preferences,
+        time_slots, // Pass the newly generated, accurate time slots
+        days: availableDays,
+    };
+}
+```
+
+Now, integrate the `<AvailabilityForm />` into a new tab on your `/admin/schedules/[scheduleId]/page.tsx`.
+
+You have successfully patched the logical gap. Your system now allows administrators to define the exact operational hours for each schedule, and the allocation engine will respect those constraints, leading to a much more accurate and realistic timetable.
+
+
+
+-------------------------------
+I feel like this might be sub-optimal for the user - I want to build templates of availability blocks just like I am doing for the other information data that the scheduleInstance is using - so that to do the scheduling I would just select one of the available time-slot logic that I have setup (just like I do with the other data-points used in the scheduleInstance)
+
+
+------------------------------
+That is an excellent idea. You are thinking exactly like an application architect. Creating reusable templates for availability is a much more scalable and user-friendly approach. It reduces redundant data entry and ensures consistency across different schedules.
+
+Let's refactor our previous implementation to incorporate this superior "template-based" system.
+
+### The Plan
+
+1.  **Update the Database Schema**: We'll create a new model called `AvailabilityTemplate` and link it to the `ScheduleInstance`.
+2.  **Build a New Admin Page**: Create a new section in the admin dashboard at `/admin/availability-templates` for full CRUD management of these new templates.
+3.  **Simplify the Schedule Form**: We will replace the complex availability editor in the `ScheduleInstance` form with a simple dropdown to select a pre-made template.
+4.  **Adjust the Solver Data Source**: We'll update the `getScheduleDataForSolver` function to pull availability data from the linked template instead of the schedule instance itself.
 
 -----
 
-### Part 2: The Allocation Engine and Timetable
+### Step 1: Update the Database Schema
 
-**Goal**: Implement the core logic that processes all the data and generates the schedule. Then, display this schedule in a calendar view.
+We'll introduce `AvailabilityTemplate` and modify `ScheduleInstance` to use it.
 
-#### Step 1: Triggering the Allocation (The "Big Red Button")
+**File:** `prisma/schema.prisma`
 
-This is a long-running task. **You cannot run this directly in a standard server action**, as it will time out. The best practice is to use a background job queue.
+```prisma
+// prisma/schema.prisma
 
-1.  **Introduce a Background Job System**:
+// ... (keep AvailabilityBlock composite type and other models)
 
-      * Services like **Vercel's Background Functions**, **Inngest**, or **Trigger.dev** are perfect for this. They integrate seamlessly with Next.js.
-      * For this example, let's assume you've set up Inngest.
+// ADD THIS NEW MODEL
+model AvailabilityTemplate {
+  id             String              @id @default(auto()) @map("_id") @db.ObjectId
+  name           String              @unique // e.g., "Standard Weekdays", "Summer Term Schedule"
+  availableSlots AvailabilityBlock[]
 
-2.  **Create a "Run Allocation" Server Action**: This action *does not* run the algorithm. It only triggers the background job.
-    **File:** `lib/actions.ts`
-
-    ```typescript
-    import { inngest } from "@/lib/inngest"; // Your Inngest client
-
-    export async function triggerAllocation(scheduleInstanceId: string) {
-        // 1. Update status to prevent double-runs
-        await prisma.scheduleInstance.update({
-            where: { id: scheduleInstanceId },
-            data: { status: 'LOCKED' } // Or a new "ALLOCATING" status
-        });
-
-        // 2. Send an event to Inngest to start the job
-        await inngest.send({
-            name: "allocation/run",
-            data: { scheduleInstanceId },
-        });
-
-        revalidatePath(`/admin/schedules/${scheduleInstanceId}`);
-        return { success: true, message: "Allocation process has started. The page will update when complete." };
-    }
-    ```
-
-3.  **Update the Admin UI**: On the `/admin/schedules/[scheduleId]` page, add a "Run Allocation" button that calls this `triggerAllocation` action.
-
-#### Step 2: Implementing the Allocation Job
-
-This is where the magic happens. You'll create a new file that defines the background job.
-
-**File:** `app/api/inngest/route.ts` (This is where Inngest functions live)
-
-```typescript
-import { inngest } from "@/lib/inngest";
-import { runAllocationAlgorithm } from "@/lib/allocation-solver"; // The new file we will create
-
-export const handler = inngest.createFunction(
-  { id: "run-allocation-job" },
-  { event: "allocation/run" },
-  async ({ event, step }) => {
-    const { scheduleInstanceId } = event.data;
-
-    await step.run("run-the-solver", async () => {
-      // This is where you call the heavy-lifting function
-      await runAllocationAlgorithm(scheduleInstanceId);
-    });
-
-    return { success: true, message: `Allocation for ${scheduleInstanceId} complete.` };
-  }
-);
-```
-
-#### Step 3: The Solver Logic Itself
-
-This is a complex task. As recommended before, **use a dedicated constraint solver library like Google OR-Tools**. You would typically run this in a Python backend that your Next.js app calls, or use a Node.js wrapper for it.
-
-Create a new file for this logic:
-
-**File:** `lib/allocation-solver.ts`
-
-```typescript
-import { prisma } from "@/prisma/client";
-// This is a PSEUDO-CODE representation.
-// You would use the actual Google OR-Tools library here.
-
-export async function runAllocationAlgorithm(scheduleInstanceId: string) {
-    // 1. FETCH ALL DATA from your database for this schedule
-    //    - All activities to be scheduled (and how many of each for each group/section)
-    //    - All available personnel and their preferences/scores
-    //    - All available rooms
-    //    - All available weekly timeslots
-    const data = await fetchAllocationData(scheduleInstanceId);
-
-    // 2. INITIALIZE THE SOLVER
-    // const solver = new ORToolsSolver();
-
-    // 3. DEFINE VARIABLES
-    //    For each activity, create boolean variables:
-    //    - activity_is_assigned_to_person[p]_at_timeslot[t]_in_room[r]
-
-    // 4. ADD CONSTRAINTS (The Hard Rules)
-    //    - Each activity must be scheduled exactly once.
-    //    - A person cannot be in two places at once.
-    //    - A room cannot be used for two activities at once.
-    //    - An attendee group/section cannot be in two places at once.
-    //    - etc.
-
-    // 5. DEFINE THE OBJECTIVE (The Soft Rules)
-    //    - Maximize the sum of preference scores for all assignments.
-    //    solver.maximize(sum_of_preference_scores);
-
-    // 6. RUN THE SOLVER
-    // const solution = solver.solve();
-
-    // 7. PARSE THE SOLUTION AND SAVE TO DATABASE
-    //    - If a solution is found, iterate through the results.
-    //    - For each assignment in the solution, create a `ScheduledEvent` record.
-    //    - Wrap this in a prisma.$transaction to save all events at once.
-    await saveSolutionToDatabase(scheduleInstanceId, solution);
-
-    // 8. UPDATE THE SCHEDULE STATUS
-    await prisma.scheduleInstance.update({
-        where: { id: scheduleInstanceId },
-        data: { status: 'COMPLETED' }
-    });
+  // A template can be used by many schedule instances
+  scheduleInstances ScheduleInstance[]
 }
 
-// Helper functions for fetching and saving would be defined here
-async function fetchAllocationData(scheduleId: string) { /* ... */ }
-async function saveSolutionToDatabase(scheduleId: string, solution: any) { /* ... */ }
+// UPDATE THE ScheduleInstance MODEL
+model ScheduleInstance {
+  id        String         @id @default(auto()) @map("_id") @db.ObjectId
+  name      String         @unique
+  startDate DateTime
+  endDate   DateTime
+  status    ScheduleStatus @default(DRAFT)
+
+  // REMOVE THIS LINE:
+  // availableSlots AvailabilityBlock[]
+
+  // ADD THESE TWO LINES TO CREATE THE RELATIONSHIP
+  availabilityTemplate   AvailabilityTemplate @relation(fields: [availabilityTemplateId], references: [id])
+  availabilityTemplateId String               @db.ObjectId
+
+  // ... (keep all the other fields and relations)
+}
 ```
 
-#### Step 4: Displaying the Final Timetable
+After making these changes, run `npx prisma db push` to sync your schema with the database. This will create the new collection and enforce the new relation.
 
-Once the status of a schedule is `COMPLETED`, your `/admin/schedules/[scheduleId]` page should display the results.
+-----
 
-  * Add a **"Timetable"** tab to the page.
-  * Inside this tab, create a calendar component (`schedule-calendar.tsx`).
-  * This component will fetch the `ScheduledEvent` records for the schedule.
-  * It will render the events on a weekly grid. You can build a custom grid with CSS or use a library like `FullCalendar` for a rich user experience.
+### Step 2: Build the New Admin Page for Templates
 
-You have now built the entire end-to-end flow. This is a highly complex and impressive application. The final step is the most challenging, but by leveraging background jobs and dedicated solver libraries, it is entirely achievable.
+We'll create a new page to manage these templates, following the same pattern as Courses and Rooms.
+
+**File Structure:**
+
+  * `/app/admin/availability-templates/page.tsx`
+  * `/app/admin/availability-templates/_components/client-page.tsx`
+  * `/app/admin/availability-templates/_components/template-form.tsx`
+  * (...and the corresponding `table` and `columns` components)
+
+Here is the code for the most important new component: the form.
+
+**File:** `app/admin/availability-templates/_components/template-form.tsx`
+
+```tsx
+"use client";
+
+// This form is almost identical to the `AvailabilityForm` we created before,
+// but it creates/updates an `AvailabilityTemplate` instead of a ScheduleInstance.
+// I will provide a simplified version here to illustrate the concept.
+
+import { useForm, useFieldArray } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { toast } from "sonner";
+import { DayOfWeek } from "@prisma/client";
+
+import { createAvailabilityTemplate } from "@/lib/actions"; // We will create this action next
+import { availabilityTemplateSchema } from "@/lib/schemas"; // We will create this schema next
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { PlusCircle, Trash2 } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
+
+type TemplateFormProps = {
+  template?: any; // Replace with proper type later
+  onSuccess: () => void;
+};
+
+export function TemplateForm({ template, onSuccess }: TemplateFormProps) {
+  const form = useForm<z.infer<typeof availabilityTemplateSchema>>({
+    resolver: zodResolver(availabilityTemplateSchema),
+    defaultValues: template || {
+      name: "",
+      availableSlots: [{ dayOfWeek: DayOfWeek.MONDAY, startTime: "08:00", endTime: "17:00" }],
+    },
+  });
+
+  const { fields, append, remove } = useFieldArray({
+    control: form.control,
+    name: "availableSlots",
+  });
+
+  const onSubmit = async (values: z.infer<typeof availabilityTemplateSchema>) => {
+    // Here you would call your create/update server action for the template
+    const result = await createAvailabilityTemplate(values);
+    if (result.success) {
+      toast.success(result.message);
+      onSuccess();
+    } else {
+      toast.error(result.message);
+    }
+  };
+
+  return (
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        <FormField
+          control={form.control}
+          name="name"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Template Name</FormLabel>
+              <FormControl><Input placeholder="e.g., Standard Weekday Schedule" {...field} /></FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        {/* The useFieldArray logic for availableSlots would be identical to the previous implementation */}
+        {/* ... form fields for availableSlots ... */}
+
+        <Button type="submit">Save Template</Button>
+      </form>
+    </Form>
+  );
+}
+```
+
+You would then create the corresponding server action, `createAvailabilityTemplate`, in `lib/actions.ts`.
+
+-----
+
+### Step 3: Simplify the `ScheduleInstance` Form
+
+Now, we can dramatically simplify the creation of a new schedule. Instead of a complex form for time blocks, we just need a dropdown.
+
+**File:** `/app/admin/schedules/_components/schedule-form.tsx` (This needs to be modified)
+
+```tsx
+// This is a conceptual update to your existing schedule form.
+
+// ... (imports)
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { AvailabilityTemplate } from "@prisma/client";
+
+type ScheduleFormProps = {
+  // ... other props
+  availabilityTemplates: AvailabilityTemplate[]; // Pass the templates as a prop
+}
+
+export function ScheduleForm({ schedule, onSuccess, availabilityTemplates }: ScheduleFormProps) {
+  const form = useForm<z.infer<typeof createScheduleInstanceSchema>>({
+     // ...
+  });
+
+  // ... (onSubmit logic)
+
+  return (
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        {/* ... other form fields for name, startDate, endDate ... */}
+
+        {/* THIS REPLACES THE COMPLEX AVAILABILITY EDITOR */}
+        <FormField
+          control={form.control}
+          name="availabilityTemplateId"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Availability Template</FormLabel>
+              <Select onValueChange={field.onChange} defaultValue={field.value}>
+                <FormControl>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a weekly schedule template" />
+                  </SelectTrigger>
+                </FormControl>
+                <SelectContent>
+                  {availabilityTemplates.map((template) => (
+                    <SelectItem key={template.id} value={template.id}>
+                      {template.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <Button type="submit">Save Schedule</Button>
+      </form>
+    </Form>
+  );
+}
+```
+
+Your `page.tsx` for creating/editing a schedule would now also need to fetch all `AvailabilityTemplate`s and pass them as a prop to this form.
+
+-----
+
+### Step 4: Adjust the Solver Data Source
+
+Finally, we adjust our data pipeline to the solver. This is a very simple but crucial change.
+
+**File:** `lib/actions.ts` (update the `getScheduleDataForSolver` helper)
+
+```typescript
+// lib/actions.ts
+
+async function getScheduleDataForSolver(id: string) {
+    const schedule = await prisma.scheduleInstance.findUnique({
+        where: { id },
+        include: { 
+            // IMPORTANT: Include the related template
+            availabilityTemplate: true,
+            // ... include all other necessary relations ...
+        }
+    });
+
+    if (!schedule || !schedule.availabilityTemplate) {
+        throw new Error("Schedule or its availability template not found");
+    }
+
+    // --- THIS IS THE CRITICAL CHANGE ---
+    // Read slots from the NESTED template, not the schedule itself
+    const dayOrder: DayOfWeek[] = [ /* ... */ ];
+    const slotsPerDay = 48;
+    let time_slots: number[] = [];
+    const availableDays: string[] = [];
+    
+    // The logic remains the same, but the source of the data changes
+    dayOrder.forEach((day, dayIndex) => {
+        const blocksForDay = schedule.availabilityTemplate.availableSlots.filter(s => s.dayOfWeek === day);
+        if (blocksForDay.length > 0) {
+            // ... (rest of the time slot generation logic is IDENTICAL)
+        }
+    });
+    
+    // ... (rest of the data preparation logic)
+
+    return {
+        // ...
+        time_slots,
+        days: availableDays,
+    };
+}
+
+```
+
+You have now successfully refactored the system to be more modular, scalable, and user-friendly. By creating templates for availability, you've reduced complexity where it matters most—for the end-user creating a schedule. This is a significant improvement.

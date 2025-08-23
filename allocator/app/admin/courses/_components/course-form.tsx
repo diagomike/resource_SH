@@ -127,119 +127,125 @@ export function CourseForm({ course, onSuccess }: CourseFormProps) {
 
         <div className="space-y-4">
           <h3 className="text-lg font-semibold">Activity Templates</h3>
-          {fields.map((field, index) => (
-            <div
-              key={field.id}
-              className="p-4 border rounded-md space-y-4 relative"
-            >
-              {fields.length > 1 && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="absolute top-2 right-2"
-                  onClick={() => remove(index)}
-                >
-                  <Trash2 className="h-4 w-4 text-red-500" />
-                </Button>
-              )}
+          {/* Scrollable container for activity templates */}
+          <div className="max-h-64 overflow-y-auto pr-2 space-y-4">
+            {fields.map((field, index) => (
+              <div
+                key={field.id}
+                className="p-4 border rounded-md space-y-4 relative"
+              >
+                {fields.length > 1 && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute top-2 right-2"
+                    onClick={() => remove(index)}
+                  >
+                    <Trash2 className="h-4 w-4 text-red-500" />
+                  </Button>
+                )}
 
-              {/* START: Detailed form fields for each activity template */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
-                  name={`activityTemplates.${index}.title`}
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Activity Title</FormLabel>
-                      <FormControl>
-                        <Input placeholder="e.g., Weekly Lecture" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name={`activityTemplates.${index}.durationMinutes`}
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Duration (Minutes)</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          placeholder="e.g., 120"
-                          {...field}
-                          onChange={(e) =>
-                            field.onChange(parseInt(e.target.value, 10))
-                          }
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name={`activityTemplates.${index}.attendeeLevel`}
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Attendee Level</FormLabel>
-                      <Select
-                        onValueChange={field.onChange}
-                        defaultValue={field.value}
-                      >
+                {/* START: Detailed form fields for each activity template */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name={`activityTemplates.${index}.title`}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Activity Title</FormLabel>
                         <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select level" />
-                          </SelectTrigger>
+                          <Input
+                            placeholder="e.g., Weekly Lecture"
+                            {...field}
+                          />
                         </FormControl>
-                        <SelectContent>
-                          {Object.values(AttendeeLevel).map((level) => (
-                            <SelectItem key={level} value={level}>
-                              {level}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name={`activityTemplates.${index}.requiredRoomType`}
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Required Room Type</FormLabel>
-                      <Select
-                        onValueChange={field.onChange}
-                        defaultValue={field.value}
-                      >
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name={`activityTemplates.${index}.durationMinutes`}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Duration (Minutes)</FormLabel>
                         <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select room type" />
-                          </SelectTrigger>
+                          <Input
+                            type="number"
+                            placeholder="e.g., 120"
+                            {...field}
+                            onChange={(e) =>
+                              field.onChange(parseInt(e.target.value, 10))
+                            }
+                          />
                         </FormControl>
-                        <SelectContent>
-                          {Object.values(RoomType).map((type) => (
-                            <SelectItem key={type} value={type}>
-                              {type}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name={`activityTemplates.${index}.attendeeLevel`}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Attendee Level</FormLabel>
+                        <Select
+                          onValueChange={field.onChange}
+                          defaultValue={field.value}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select level" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {Object.values(AttendeeLevel).map((level) => (
+                              <SelectItem key={level} value={level}>
+                                {level}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name={`activityTemplates.${index}.requiredRoomType`}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Required Room Type</FormLabel>
+                        <Select
+                          onValueChange={field.onChange}
+                          defaultValue={field.value}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select room type" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {Object.values(RoomType).map((type) => (
+                              <SelectItem key={type} value={type}>
+                                {type}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                {/* Use the dedicated component for the nested personnel array */}
+                <PersonnelFields nestIndex={index} control={form.control} />
+                {/* END: Detailed form fields */}
               </div>
-
-              {/* Use the dedicated component for the nested personnel array */}
-              <PersonnelFields nestIndex={index} control={form.control} />
-              {/* END: Detailed form fields */}
-            </div>
-          ))}
+            ))}
+          </div>
           <Button
             type="button"
             variant="outline"

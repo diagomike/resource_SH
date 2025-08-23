@@ -8,6 +8,7 @@ import {
   Section,
   Batch,
   Program,
+  AvailabilityTemplate, // Import AvailabilityTemplate
 } from "@prisma/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CoursesAssignmentTab } from "./courses-assignment-tab";
@@ -29,11 +30,14 @@ interface ResourceAssignmentClientProps {
     personnel: User[];
     rooms: Room[];
     sections: Section[];
+    // Include availability template for displaying its name in preview
+    availabilityTemplate?: AvailabilityTemplate | null;
   };
   allCourses: Course[];
   allPersonnel: User[];
   allRooms: Room[];
   allSections: SectionWithRelations[];
+  availabilityTemplates: AvailabilityTemplate[]; // Add availabilityTemplates prop
 }
 
 export function ResourceAssignmentClient({
@@ -42,7 +46,16 @@ export function ResourceAssignmentClient({
   allPersonnel,
   allRooms,
   allSections,
+  availabilityTemplates, // Destructure new prop
 }: ResourceAssignmentClientProps) {
+  const scheduleInstanceWithRelations = {
+    ...scheduleInstance,
+    courses: scheduleInstance.courses,
+    personnel: scheduleInstance.personnel,
+    rooms: scheduleInstance.rooms,
+    sections: scheduleInstance.sections as SectionWithRelations[], // assert type or map to include relations
+    availabilityTemplate: scheduleInstance.availabilityTemplate ?? null,
+  };
   return (
     <Tabs defaultValue="preview">
       <TabsList className="grid w-full grid-cols-5">
@@ -54,13 +67,8 @@ export function ResourceAssignmentClient({
       </TabsList>
       <TabsContent value="preview">
         <PreviewTab
-          scheduleInstance={{
-            ...scheduleInstance,
-            courses: allCourses,
-            personnel: allPersonnel,
-            rooms: allRooms,
-            sections: allSections,
-          }}
+          scheduleInstance={scheduleInstanceWithRelations}
+          availabilityTemplates={availabilityTemplates} // Pass availabilityTemplates
         />
       </TabsContent>
       <TabsContent value="courses">

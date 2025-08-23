@@ -24,6 +24,8 @@ import {
   updateUserSchema,
   userSchema,
   removeResourceSchema,
+  availabilityTemplateSchema,
+  updateScheduleTemplateSchema,
 } from "./schemas";
 
 // ---------------------------------------------------
@@ -123,17 +125,31 @@ export async function updateCourse(
 }
 
 /**
- * Deletes a Course.
+ * Deletes a Course and its associated ActivityTemplates.
  */
 export async function deleteCourse(
   input: z.infer<typeof idSchema>
 ): Promise<ActionResponse<any>> {
   try {
-    await prisma.course.delete({ where: { id: input.id } });
+    await prisma.$transaction(async (tx) => {
+      // 1. Delete associated ActivityTemplates first
+      await tx.activityTemplate.deleteMany({
+        where: { courseId: input.id },
+      });
+
+      // 2. Then delete the Course
+      await tx.course.delete({ where: { id: input.id } });
+    });
+
     revalidatePath("/admin/courses");
     return { success: true, message: "Course deleted successfully." };
   } catch (e) {
-    return { success: false, message: "Failed to delete course." };
+    console.error("Failed to delete course:", e); // Log the error for debugging
+    return {
+      success: false,
+      message:
+        "Failed to delete course. It might be assigned to a schedule or another related entity.",
+    };
   }
 }
 
@@ -816,14 +832,122 @@ export async function getAllProgramsWithChildren() {
   });
 }
 
-// --- Schedule Instance Actions ---
+// --- Availability Template Actions (NEW SECTION) ---
 
 /**
- * Creates a new, empty ScheduleInstance.
+ * Creates a new AvailabilityTemplate.
+ */
+export async function createAvailabilityTemplate(
+  input: z.infer<typeof availabilityTemplateSchema>
+): Promise<ActionResponse<any>> {
+  const validation = availabilityTemplateSchema.safeParse(input);
+  if (!validation.success) {
+    return {
+      success: false,
+      message: "Invalid input.",
+      validationErrors: validation.error.flatten().fieldErrors,
+    };
+  }
+  try {
+    const newTemplate = await prisma.availabilityTemplate.create({
+      data: validation.data,
+    });
+    revalidatePath("/admin/availability-templates");
+    return {
+      success: true,
+      message: "Template created successfully.",
+      data: newTemplate,
+    };
+  } catch (e: any) {
+    if (e.code === "P2002") {
+      return {
+        success: false,
+        message: `A template named '${validation.data.name}' already exists.`,
+      };
+    }
+    return { success: false, message: "Failed to create template." };
+  }
+}
+
+/**
+ * Updates an existing AvailabilityTemplate.
+ */
+export async function updateAvailabilityTemplate(
+  input: z.infer<typeof availabilityTemplateSchema>
+): Promise<ActionResponse<any>> {
+  const validation = availabilityTemplateSchema.safeParse(input);
+  if (!validation.success || !input.id) {
+    return { success: false, message: "Invalid input." };
+  }
+  const { id, ...data } = validation.data;
+  try {
+    const updatedTemplate = await prisma.availabilityTemplate.update({
+      where: { id },
+      data,
+    });
+    revalidatePath("/admin/availability-templates");
+    revalidatePath(`/admin/availability-templates/${id}`);
+    return {
+      success: true,
+      message: "Template updated successfully.",
+      data: updatedTemplate,
+    };
+  } catch (e: any) {
+    if (e.code === "P2002") {
+      return {
+        success: false,
+        message: `A template named '${validation.data.name}' already exists.`,
+      };
+    }
+    return { success: false, message: "Failed to update template." };
+  }
+}
+
+/**
+ * Deletes an AvailabilityTemplate.
+ */
+export async function deleteAvailabilityTemplate(
+  input: z.infer<typeof idSchema>
+): Promise<ActionResponse<any>> {
+  try {
+    await prisma.availabilityTemplate.delete({ where: { id: input.id } });
+    revalidatePath("/admin/availability-templates");
+    return { success: true, message: "Template deleted successfully." };
+  } catch (e) {
+    return {
+      success: false,
+      message: "Failed to delete template. It might be in use by a schedule.",
+    };
+  }
+}
+
+/**
+ * Fetches all AvailabilityTemplates.
+ */
+export async function getAllAvailabilityTemplates() {
+  return prisma.availabilityTemplate.findMany({
+    orderBy: { name: "asc" },
+  });
+}
+
+/**
+ * Fetches a single AvailabilityTemplate by its ID.
+ */
+export async function getAvailabilityTemplateById(id: string) {
+  return prisma.availabilityTemplate.findUnique({
+    where: { id },
+  });
+}
+
+// --- Schedule Instance Actions ---
+/**
+ * Creates a new ScheduleInstance.
+ * (This function is UPDATED to use the new schema with availabilityTemplateId)
  */
 export async function createScheduleInstance(
   input: z.infer<typeof createScheduleInstanceSchema>
 ): Promise<ActionResponse<any>> {
+  // The validation now correctly checks for availabilityTemplateId
   const validation = createScheduleInstanceSchema.safeParse(input);
   if (!validation.success) {
     return {
@@ -1075,5 +1199,36 @@ export async function submitPreferences(
     return { success: true, message: "Preferences saved successfully." };
   } catch (e) {
     return { success: false, message: "Failed to save preferences." };
+  }
+}
+
+/**
+ * Updates the AvailabilityTemplate for a specific ScheduleInstance.
+ */
+export async function updateScheduleTemplate(
+  input: z.infer<typeof updateScheduleTemplateSchema>
+): Promise<ActionResponse<any>> {
+  const validation = updateScheduleTemplateSchema.safeParse(input);
+  if (!validation.success) {
+    return { success: false, message: "Invalid input." };
+  }
+
+  const { scheduleInstanceId, availabilityTemplateId } = validation.data;
+
+  try {
+    await prisma.scheduleInstance.update({
+      where: { id: scheduleInstanceId },
+      data: {
+        availabilityTemplateId: availabilityTemplateId,
+      },
+    });
+    revalidatePath(`/admin/schedules/${scheduleInstanceId}`);
+    return {
+      success: true,
+      message: "Availability template updated successfully.",
+    };
+  } catch (error) {
+    console.error(error);
+    return { success: false, message: "Failed to update the template." };
   }
 }

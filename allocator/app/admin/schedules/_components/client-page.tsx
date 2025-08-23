@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ScheduleInstance } from "@prisma/client";
+import { ScheduleInstance, AvailabilityTemplate } from "@prisma/client"; // Import AvailabilityTemplate
 import { PlusCircle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -17,9 +17,13 @@ import { ScheduleForm } from "./schedule-form";
 
 interface ScheduleClientPageProps {
   schedules: ScheduleInstance[];
+  availabilityTemplates: AvailabilityTemplate[]; // Add availabilityTemplates to props
 }
 
-export function ScheduleClientPage({ schedules }: ScheduleClientPageProps) {
+export function ScheduleClientPage({
+  schedules,
+  availabilityTemplates,
+}: ScheduleClientPageProps) {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
   const handleSuccess = () => {
@@ -47,7 +51,11 @@ export function ScheduleClientPage({ schedules }: ScheduleClientPageProps) {
               the next step.
             </DialogDescription>
           </DialogHeader>
-          <ScheduleForm onSuccess={handleSuccess} />
+          <ScheduleForm
+            onSuccess={handleSuccess}
+            availabilityTemplates={availabilityTemplates}
+          />{" "}
+          {/* Pass availabilityTemplates to ScheduleForm */}
         </DialogContent>
       </Dialog>
     </>

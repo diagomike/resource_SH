@@ -1,4 +1,7 @@
-import { getScheduleInstanceDetails } from "@/lib/actions";
+import {
+  getScheduleInstanceDetails,
+  getAllAvailabilityTemplates,
+} from "@/lib/actions";
 import { notFound } from "next/navigation";
 import { ResourceAssignmentClient } from "./_components/resource-assignment-client";
 import { format } from "date-fns";
@@ -15,6 +18,7 @@ export default async function ScheduleDashboardPage({
 }: ScheduleDashboardPageProps) {
   const { scheduleId } = await params;
   const data = await getScheduleInstanceDetails(scheduleId);
+  const availabilityTemplates = await getAllAvailabilityTemplates(); // Fetch all availability templates
 
   if (!data) {
     notFound();
@@ -51,6 +55,7 @@ export default async function ScheduleDashboardPage({
         allPersonnel={allPersonnel}
         allRooms={allRooms}
         allSections={allSections}
+        availabilityTemplates={availabilityTemplates} // Pass availabilityTemplates
       />
     </div>
   );

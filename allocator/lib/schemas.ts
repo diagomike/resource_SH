@@ -1,7 +1,13 @@
 // lib/schemas.ts
 
 import { z } from "zod";
-import { Role, RoomType, AttendeeLevel, ScheduleStatus } from "@prisma/client";
+import {
+  Role,
+  RoomType,
+  AttendeeLevel,
+  ScheduleStatus,
+  DayOfWeek,
+} from "@prisma/client";
 
 // ---------------------------------------------------
 // 2. Zod Schemas for Validation
@@ -134,11 +140,45 @@ export const createBatchWithSectionsSchema = z.object({
     .optional(), // Sections are optional
 });
 
-// --- ScheduleInstance Schema ---
+// --- AvailabilityTemplate Schema (NEW) ---
+export const availabilityTemplateSchema = z
+  .object({
+    id: z.string().optional(), // For updates
+    name: z.string().min(3, "Template name must be at least 3 characters."),
+    availableSlots: z
+      .array(
+        z.object({
+          dayOfWeek: z.enum(DayOfWeek),
+          startTime: z
+            .string()
+            .regex(/^\d{2}:\d{2}$/, "Invalid start time format (HH:MM)."),
+          endTime: z
+            .string()
+            .regex(/^\d{2}:\d{2}$/, "Invalid end time format (HH:MM)."),
+        })
+      )
+      .min(1, "At least one time block is required."),
+  })
+  .refine(
+    (data) => {
+      // Ensure for each slot, endTime is after startTime
+      return data.availableSlots.every((slot) => slot.endTime > slot.startTime);
+    },
+    {
+      message: "End time must be after start time for all time blocks.",
+      path: ["availableSlots"], // You can specify a path to show the error
+    }
+  );
+
+// --- ScheduleInstance Schema (UPDATED) ---
 export const createScheduleInstanceSchema = z.object({
   name: z.string().min(5),
   startDate: z.date(),
   endDate: z.date(),
+  // ADD THIS LINE
+  availabilityTemplateId: z
+    .string()
+    .min(1, "An availability template is required."),
 });
 
 export const updateScheduleInstanceSchema = createScheduleInstanceSchema.extend(
@@ -146,6 +186,11 @@ export const updateScheduleInstanceSchema = createScheduleInstanceSchema.extend(
     id: z.string(),
   }
 );
+
+export const updateScheduleTemplateSchema = z.object({
+  scheduleInstanceId: z.string(),
+  availabilityTemplateId: z.string().min(1, "A template must be selected."),
+});
 
 export const assignResourcesSchema = z.object({
   scheduleInstanceId: z.string(),
