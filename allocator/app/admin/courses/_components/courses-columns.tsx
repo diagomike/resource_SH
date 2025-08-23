@@ -2,7 +2,7 @@
 
 import { ColumnDef } from "@tanstack/react-table";
 import { CourseWithTemplates } from "@/types";
-import { deleteCourse } from "@/lib/actions";
+import { deleteCourse } from "@/lib/actions"; // Import the deleteCourse action
 import { toast } from "sonner";
 import {
   DropdownMenu,

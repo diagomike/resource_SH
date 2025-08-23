@@ -1,13 +1,29 @@
 "use client";
 
-import { ScheduleInstance, Course, User, Room } from "@prisma/client";
+import {
+  ScheduleInstance,
+  Course,
+  User,
+  Room,
+  AvailabilityTemplate,
+} from "@prisma/client";
 import { toast } from "sonner";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { removeResourceFromSchedule } from "@/lib/actions";
+import {
+  removeResourceFromSchedule,
+  updateScheduleTemplate,
+} from "@/lib/actions"; // Import updateScheduleTemplate
 import { SectionWithRelations } from "./resource-assignment-client";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type ResourceType = "course" | "personnel" | "room" | "section";
 
@@ -17,10 +33,16 @@ interface PreviewTabProps {
     personnel: User[];
     rooms: Room[];
     sections: SectionWithRelations[];
+    // Ensure availabilityTemplate is included if it's eagerly loaded
+    availabilityTemplate?: AvailabilityTemplate | null;
   };
+  availabilityTemplates: AvailabilityTemplate[]; // Add availabilityTemplates to props
 }
 
-export function PreviewTab({ scheduleInstance }: PreviewTabProps) {
+export function PreviewTab({
+  scheduleInstance,
+  availabilityTemplates,
+}: PreviewTabProps) {
   const handleRemove = async (
     resourceId: string,
     resourceType: ResourceType
@@ -29,6 +51,19 @@ export function PreviewTab({ scheduleInstance }: PreviewTabProps) {
       scheduleInstanceId: scheduleInstance.id,
       resourceId,
       resourceType,
+    });
+
+    if (result.success) {
+      toast.success(result.message);
+    } else {
+      toast.error(result.message);
+    }
+  };
+
+  const handleTemplateChange = async (newTemplateId: string) => {
+    const result = await updateScheduleTemplate({
+      scheduleInstanceId: scheduleInstance.id,
+      availabilityTemplateId: newTemplateId,
     });
 
     if (result.success) {
@@ -73,60 +108,85 @@ export function PreviewTab({ scheduleInstance }: PreviewTabProps) {
       <CardHeader>
         <CardTitle>Assigned Resources Preview</CardTitle>
       </CardHeader>
-      <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        <ResourceList
-          title="Courses"
-          items={scheduleInstance.courses}
-          type="course"
-          renderItem={(item: Course) => (
-            <>
-              <span className="font-medium">{item.code}</span> - {item.title}
-            </>
-          )}
-        />
-        <ResourceList
-          title="Personnel"
-          items={scheduleInstance.personnel}
-          type="personnel"
-          renderItem={(item: User) => (
-            <>
-              <span className="font-medium">{item.name}</span>
-              <div className="flex gap-1 mt-1">
-                {item.roles.map((role) => (
-                  <Badge key={role} variant="secondary">
-                    {role}
-                  </Badge>
-                ))}
-              </div>
-            </>
-          )}
-        />
-        <ResourceList
-          title="Rooms"
-          items={scheduleInstance.rooms}
-          type="room"
-          renderItem={(item: Room) => (
-            <>
-              <span className="font-medium">{item.name}</span> ({item.building})
-              <div className="text-sm text-muted-foreground">
-                Type: {item.type}, Capacity: {item.capacity}
-              </div>
-            </>
-          )}
-        />
-        <ResourceList
-          title="Attendees (Sections)"
-          items={scheduleInstance.sections}
-          type="section"
-          renderItem={(item: SectionWithRelations) => (
-            <>
-              <span className="font-medium">{item.name}</span>
-              <div className="text-sm text-muted-foreground">
-                {item.batch.program.name} - {item.batch.name}
-              </div>
-            </>
-          )}
-        />
+      <CardContent className="grid grid-cols-1">
+        {/* Availability Template Selector */}
+        <div className="mb-4">
+          <h3 className="text-lg font-semibold mb-2">Availability Template</h3>
+          <Select
+            onValueChange={handleTemplateChange}
+            defaultValue={scheduleInstance.availabilityTemplateId || ""}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Select a weekly schedule template" />
+            </SelectTrigger>
+            <SelectContent>
+              {availabilityTemplates.map((template) => (
+                <SelectItem key={template.id} value={template.id}>
+                  {template.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-sm text-muted-foreground mt-2">
+            This defines the days and times when events can be scheduled.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <ResourceList
+            title="Courses"
+            items={scheduleInstance.courses}
+            type="course"
+            renderItem={(item: Course) => (
+              <>
+                <span className="font-medium">{item.code}</span> - {item.title}
+              </>
+            )}
+          />
+          <ResourceList
+            title="Personnel"
+            items={scheduleInstance.personnel}
+            type="personnel"
+            renderItem={(item: User) => (
+              <>
+                <span className="font-medium">{item.name}</span>
+                <div className="flex gap-1 mt-1">
+                  {item.roles.map((role) => (
+                    <Badge key={role} variant="secondary">
+                      {role}
+                    </Badge>
+                  ))}
+                </div>
+              </>
+            )}
+          />
+          <ResourceList
+            title="Rooms"
+            items={scheduleInstance.rooms}
+            type="room"
+            renderItem={(item: Room) => (
+              <>
+                <span className="font-medium">{item.name}</span> (
+                {item.building})
+                <div className="text-sm text-muted-foreground">
+                  Type: {item.type}, Capacity: {item.capacity}
+                </div>
+              </>
+            )}
+          />
+          <ResourceList
+            title="Attendees (Sections)"
+            items={scheduleInstance.sections}
+            type="section"
+            renderItem={(item: SectionWithRelations) => (
+              <>
+                <span className="font-medium">{item.name}</span>
+                <div className="text-sm text-muted-foreground">
+                  {item.batch.program.name} - {item.batch.name}
+                </div>
+              </>
+            )}
+          />
+        </div>
       </CardContent>
     </Card>
   );

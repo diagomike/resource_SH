@@ -1,253 +1,280 @@
-Congratulations on completing all the administrative interfaces\! You have built a robust and comprehensive system for managing all the necessary data. This is a massive accomplishment.
+Of course. You have reached the final and most critical step: connecting your robust Next.js admin panel to the powerful Python allocation engine.
 
-You are now at the final and most exciting phase: **bringing the system to life**. This involves two major steps that transition from data entry to dynamic interaction and automated logic:
+I will fully implement the remaining logic required in your `lib/actions.ts` file. This will involve:
 
-1.  **The Personnel Preference Portal**: A public-facing interface for personnel to submit their activity preferences.
-2.  **The Allocation Engine**: The core logic that takes all the data and preferences and generates the final, conflict-free timetable.
+1.  A powerful data aggregation function (`getScheduleDataForSolver`) to gather and correctly format all the necessary data from your database.
+2.  An updated `triggerAllocation` server action that calls the Python service and handles the response.
+3.  A `saveSolutionToDatabase` function to process the solver's results and save the final timetable.
 
-Let's break down how to approach this final frontier.
+Here is the complete code to add to your `lib/actions.ts` file.
 
 -----
 
-### Part 1: The Personnel Preference Portal
+### Final Implementation for `lib/actions.ts`
 
-**Goal**: Create a simple, secure, and user-friendly page where lecturers and other personnel can rank the activities they are eligible for within a specific schedule.
+Copy and paste the following code into your existing `lib/actions.ts` file. It includes the new functions and modifies `triggerAllocation`.
 
-#### How It Should Work
+```typescript
+// lib/actions.ts
 
-An administrator, from the Schedule Dashboard (`/admin/schedules/[scheduleId]`), should be able to get a unique link for each assigned person. This link leads them to a page where they can drag-and-drop activities into their preferred order.
+// ... (keep all existing imports: z, prisma, revalidatePath, schemas, etc.)
+import { DayOfWeek } from "@prisma/client"; // Ensure DayOfWeek is imported
 
-#### Step 1: Generate Secure Links
+// ... (keep your existing ActionResponse type and all other server actions)
 
-First, we need a way to securely identify personnel. A good approach is to use a token.
 
-1.  **Update Your Schema**: Add a token field to the `User` model in `prisma/schema.prisma` to store a unique, secure identifier.
+// =================================================================================
+// STEP 1: DATA AGGREGATION AND FORMATTING FOR THE SOLVER
+// =================================================================================
 
-    ```prisma
-    // prisma/schema.prisma
-    model User {
-      // ... existing fields
-      preferenceToken String @unique @default(cuid()) // Add this line
-    }
-    ```
-
-    Run `npx prisma db push` to apply this change. `cuid()` generates a collision-resistant unique ID.
-
-2.  **Update the Admin UI**: In your Schedule Dashboard (`/admin/schedules/[scheduleId]`), add a "Personnel" tab. In that table, add a button for each person called "Copy Preference Link". The function for this button would generate a URL like: `/preferences/${scheduleId}?token=${user.preferenceToken}`.
-
-#### Step 2: Build the Preference Page
-
-This is the page the unique link points to.
-
-**File Structure:**
-
-  * `app/preferences/[scheduleId]/page.tsx`
-  * `app/preferences/[scheduleId]/_components/preference-sorter-client.tsx`
-
-**File:** `app/preferences/[scheduleId]/page.tsx`
-
-```tsx
-import { prisma } from "@/prisma/client";
-import { PreferenceSorterClient } from "./_components/preference-sorter-client";
-import { notFound } from "next/navigation";
-
-type PreferencesPageProps = {
-  params: { scheduleId: string };
-  searchParams: { token?: string };
+/**
+ * Converts "HH:MM" time string to a slot index within a 24-hour day (0-47).
+ * e.g., "00:00" -> 0, "08:30" -> 17, "23:30" -> 47
+ */
+const timeToSlotIndex = (time: string): number => {
+    const [hours, minutes] = time.split(':').map(Number);
+    return hours * 2 + Math.floor(minutes / 30);
 };
 
-// This Server Component acts as a secure data loader
-export default async function PreferencesPage({ params, searchParams }: PreferencesPageProps) {
-  const { scheduleId } = params;
-  const { token } = searchParams;
-
-  if (!token) {
-    return notFound();
-  }
-
-  // 1. Find the user associated with the token
-  const user = await prisma.user.findUnique({ where: { preferenceToken: token } });
-  if (!user) {
-    return notFound();
-  }
-
-  // 2. Find the schedule and ensure this user is part of it
-  const schedule = await prisma.scheduleInstance.findFirst({
-    where: {
-      id: scheduleId,
-      personnel: { some: { id: user.id } },
-    },
-    include: {
-      courses: { include: { activityTemplates: true } },
-      preferences: { where: { personnelId: user.id } },
-    },
-  });
-
-  if (!schedule) {
-    return <div className="container mx-auto py-10">You are not assigned to this schedule.</div>;
-  }
-
-  // 3. Filter activities relevant to the user's roles
-  const availableActivities = schedule.courses.flatMap(course => 
-    course.activityTemplates.filter(template => 
-      template.requiredPersonnel.some(req => user.roles.includes(req.role))
-    ).map(template => ({ ...template, course })) // Add course info to template
-  );
-
-  return (
-    <div className="container mx-auto py-10">
-      <div className="text-center mb-8">
-        <h1 className="text-3xl font-bold">Set Your Preferences</h1>
-        <p className="text-muted-foreground">For schedule: {schedule.name}</p>
-        <p>Welcome, {user.name}. Please drag and drop the activities to rank them in your preferred order.</p>
-      </div>
-      <PreferenceSorterClient
-        personnelId={user.id}
-        scheduleInstanceId={schedule.id}
-        availableActivities={availableActivities}
-        existingPreferences={schedule.preferences}
-      />
-    </div>
-  );
-}
-```
-
-**Note:** The `PreferenceSorterClient` would be a client component that uses a drag-and-drop library (like `dnd-kit`) to manage the list and calls your `submitPreferences` server action on save.
-
------
-
-### Part 2: The Allocation Engine and Timetable
-
-**Goal**: Implement the core logic that processes all the data and generates the schedule. Then, display this schedule in a calendar view.
-
-#### Step 1: Triggering the Allocation (The "Big Red Button")
-
-This is a long-running task. **You cannot run this directly in a standard server action**, as it will time out. The best practice is to use a background job queue.
-
-1.  **Introduce a Background Job System**:
-
-      * Services like **Vercel's Background Functions**, **Inngest**, or **Trigger.dev** are perfect for this. They integrate seamlessly with Next.js.
-      * For this example, let's assume you've set up Inngest.
-
-2.  **Create a "Run Allocation" Server Action**: This action *does not* run the algorithm. It only triggers the background job.
-    **File:** `lib/actions.ts`
-
-    ```typescript
-    import { inngest } from "@/lib/inngest"; // Your Inngest client
-
-    export async function triggerAllocation(scheduleInstanceId: string) {
-        // 1. Update status to prevent double-runs
-        await prisma.scheduleInstance.update({
-            where: { id: scheduleInstanceId },
-            data: { status: 'LOCKED' } // Or a new "ALLOCATING" status
-        });
-
-        // 2. Send an event to Inngest to start the job
-        await inngest.send({
-            name: "allocation/run",
-            data: { scheduleInstanceId },
-        });
-
-        revalidatePath(`/admin/schedules/${scheduleInstanceId}`);
-        return { success: true, message: "Allocation process has started. The page will update when complete." };
-    }
-    ```
-
-3.  **Update the Admin UI**: On the `/admin/schedules/[scheduleId]` page, add a "Run Allocation" button that calls this `triggerAllocation` action.
-
-#### Step 2: Implementing the Allocation Job
-
-This is where the magic happens. You'll create a new file that defines the background job.
-
-**File:** `app/api/inngest/route.ts` (This is where Inngest functions live)
-
-```typescript
-import { inngest } from "@/lib/inngest";
-import { runAllocationAlgorithm } from "@/lib/allocation-solver"; // The new file we will create
-
-export const handler = inngest.createFunction(
-  { id: "run-allocation-job" },
-  { event: "allocation/run" },
-  async ({ event, step }) => {
-    const { scheduleInstanceId } = event.data;
-
-    await step.run("run-the-solver", async () => {
-      // This is where you call the heavy-lifting function
-      await runAllocationAlgorithm(scheduleInstanceId);
+/**
+ * Gathers all data for a given schedule and formats it into the JSON structure
+ * expected by the Python allocation service.
+ */
+async function getScheduleDataForSolver(scheduleInstanceId: string) {
+    const schedule = await prisma.scheduleInstance.findUnique({
+        where: { id: scheduleInstanceId },
+        include: {
+            availabilityTemplate: true,
+            courses: { include: { activityTemplates: true } },
+            personnel: true,
+            rooms: true,
+            sections: { include: { groups: true } },
+            preferences: true,
+        },
     });
 
-    return { success: true, message: `Allocation for ${scheduleInstanceId} complete.` };
-  }
-);
-```
+    if (!schedule || !schedule.availabilityTemplate) {
+        throw new Error("Schedule or its availability template not found.");
+    }
 
-#### Step 3: The Solver Logic Itself
+    // --- 1. Process Time Slots ---
+    const dayOrder: DayOfWeek[] = [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY, DayOfWeek.SATURDAY, DayOfWeek.SUNDAY];
+    const slotsPerDay = 48; // 24 hours * 2 slots/hour
+    let time_slots: number[] = [];
+    const availableDays: string[] = [];
+    
+    dayOrder.forEach((day, dayIndex) => {
+        const blocksForDay = schedule.availabilityTemplate.availableSlots.filter(s => s.dayOfWeek === day);
+        if (blocksForDay.length > 0) {
+            if (!availableDays.includes(day)) {
+                availableDays.push(day);
+            }
+            blocksForDay.forEach(block => {
+                const startSlot = timeToSlotIndex(block.startTime);
+                const endSlot = timeToSlotIndex(block.endTime);
+                for (let i = startSlot; i < endSlot; i++) {
+                    // Use a global index across the entire week for the solver
+                    const globalSlotIndex = (dayIndex * slotsPerDay) + i;
+                    time_slots.push(globalSlotIndex);
+                }
+            });
+        }
+    });
+    time_slots = [...new Set(time_slots)].sort((a, b) => a - b);
 
-This is a complex task. As recommended before, **use a dedicated constraint solver library like Google OR-Tools**. You would typically run this in a Python backend that your Next.js app calls, or use a Node.js wrapper for it.
+    // --- 2. Expand Activities ---
+    // A single ActivityTemplate can result in multiple "tasks" for the solver.
+    // e.g., a Lab template creates a task for each group in each section.
+    const activities = schedule.sections.flatMap(section =>
+        schedule.courses.flatMap(course =>
+            course.activityTemplates.flatMap(template => {
+                if (template.attendeeLevel === 'SECTION') {
+                    // Create one activity for the entire section
+                    return [{
+                        id: `${template.id}_${section.id}`, // Unique ID for the solver task
+                        templateId: template.id, // Keep original template ID for saving results
+                        duration_slots: Math.ceil(template.durationMinutes / 30),
+                        required_room_type: template.requiredRoomType,
+                        required_personnel: template.requiredPersonnel,
+                        attendee_level: 'SECTION',
+                        attendee_id: section.id,
+                    }];
+                } else { // GROUP level
+                    // Create one activity for each group within the section
+                    return section.groups.map(group => ({
+                        id: `${template.id}_${group.id}`, // Unique ID for the solver task
+                        templateId: template.id, // Keep original template ID for saving results
+                        duration_slots: Math.ceil(template.durationMinutes / 30),
+                        required_room_type: template.requiredRoomType,
+                        required_personnel: template.requiredPersonnel,
+                        attendee_level: 'GROUP',
+                        attendee_id: group.id,
+                    }));
+                }
+            })
+        )
+    );
 
-Create a new file for this logic:
+    // --- 3. Format Other Resources ---
+    const personnel = schedule.personnel.map(p => ({ id: p.id, roles: p.roles }));
+    const rooms = schedule.rooms.map(r => ({ id: r.id, type: r.type }));
+    
+    // Preferences link to the template, not the expanded activity, so we use templateId
+    const preferences = schedule.preferences.map(p => ({
+        personnel_id: p.personnelId,
+        activity_id: p.activityTemplateId,
+        rank: p.rank,
+    }));
 
-**File:** `lib/allocation-solver.ts`
+    return {
+        activities,
+        personnel,
+        rooms,
+        preferences,
+        time_slots,
+        days: availableDays,
+    };
+}
 
-```typescript
-import { prisma } from "@/prisma/client";
-// This is a PSEUDO-CODE representation.
-// You would use the actual Google OR-Tools library here.
 
-export async function runAllocationAlgorithm(scheduleInstanceId: string) {
-    // 1. FETCH ALL DATA from your database for this schedule
-    //    - All activities to be scheduled (and how many of each for each group/section)
-    //    - All available personnel and their preferences/scores
-    //    - All available rooms
-    //    - All available weekly timeslots
-    const data = await fetchAllocationData(scheduleInstanceId);
+// =================================================================================
+// STEP 2: SAVING THE SOLVER'S SOLUTION
+// =================================================================================
 
-    // 2. INITIALIZE THE SOLVER
-    // const solver = new ORToolsSolver();
+/**
+ * Saves the timetable solution from the Python service to the database.
+ * This is done in a transaction to ensure data integrity.
+ */
+async function saveSolutionToDatabase(scheduleInstanceId: string, solution: any[]) {
+    // Helper to convert a global slot index back to day and time
+    const slotToTime = (globalSlotIndex: number) => {
+        const slotsPerDay = 48;
+        const dayIndex = Math.floor(globalSlotIndex / slotsPerDay);
+        const slotInDay = globalSlotIndex % slotsPerDay;
+        
+        const day = Object.values(DayOfWeek)[dayIndex];
+        const hours = Math.floor(slotInDay / 2);
+        const minutes = (slotInDay % 2) * 30;
 
-    // 3. DEFINE VARIABLES
-    //    For each activity, create boolean variables:
-    //    - activity_is_assigned_to_person[p]_at_timeslot[t]_in_room[r]
+        return { day, time: `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}` };
+    };
 
-    // 4. ADD CONSTRAINTS (The Hard Rules)
-    //    - Each activity must be scheduled exactly once.
-    //    - A person cannot be in two places at once.
-    //    - A room cannot be used for two activities at once.
-    //    - An attendee group/section cannot be in two places at once.
-    //    - etc.
+    const eventsToCreate = solution.map(event => {
+        const { day: startDay, time: startTime } = slotToTime(event.start_slot);
+        const { time: endTime } = slotToTime(event.end_slot);
+        
+        return {
+            dayOfWeek: startDay,
+            startTime: startTime,
+            endTime: endTime,
+            scheduleInstanceId: scheduleInstanceId,
+            activityTemplateId: event.templateId, // Use the original templateId
+            roomId: event.room_id,
+            personnelIds: event.personnel_ids,
+            attendeeSectionId: event.attendee_level === 'SECTION' ? event.attendee_id : null,
+            attendeeGroupId: event.attendee_level === 'GROUP' ? event.attendee_id : null,
+        };
+    });
 
-    // 5. DEFINE THE OBJECTIVE (The Soft Rules)
-    //    - Maximize the sum of preference scores for all assignments.
-    //    solver.maximize(sum_of_preference_scores);
+    // Use a transaction to perform a clean update
+    await prisma.$transaction([
+        // 1. Delete all previously scheduled events for this schedule
+        prisma.scheduledEvent.deleteMany({
+            where: { scheduleInstanceId: scheduleInstanceId },
+        }),
+        // 2. Create all the new events from the solution
+        prisma.scheduledEvent.createMany({
+            data: eventsToCreate,
+        }),
+        // 3. Mark the schedule as completed
+        prisma.scheduleInstance.update({
+            where: { id: scheduleInstanceId },
+            data: { status: 'COMPLETED' },
+        }),
+    ]);
+}
 
-    // 6. RUN THE SOLVER
-    // const solution = solver.solve();
 
-    // 7. PARSE THE SOLUTION AND SAVE TO DATABASE
-    //    - If a solution is found, iterate through the results.
-    //    - For each assignment in the solution, create a `ScheduledEvent` record.
-    //    - Wrap this in a prisma.$transaction to save all events at once.
-    await saveSolutionToDatabase(scheduleInstanceId, solution);
+// =================================================================================
+// STEP 3: THE TRIGGER ACTION (UPDATED)
+// =================================================================================
 
-    // 8. UPDATE THE SCHEDULE STATUS
+/**
+ * Gathers data, calls the Python solver, and saves the resulting timetable.
+ */
+export async function triggerAllocation(
+    scheduleInstanceId: string
+): Promise<ActionResponse<any>> {
+    console.log(`Starting allocation for schedule: ${scheduleInstanceId}`);
+
+    // 1. Update status to LOCK the schedule during allocation
     await prisma.scheduleInstance.update({
         where: { id: scheduleInstanceId },
-        data: { status: 'COMPLETED' }
+        data: { status: 'LOCKED' },
     });
-}
 
-// Helper functions for fetching and saving would be defined here
-async function fetchAllocationData(scheduleId: string) { /* ... */ }
-async function saveSolutionToDatabase(scheduleId: string, solution: any) { /* ... */ }
+    try {
+        // 2. Aggregate and format all data required by the solver
+        console.log("Gathering and formatting data for solver...");
+        const solverInput = await getScheduleDataForSolver(scheduleInstanceId);
+        
+        if (solverInput.activities.length === 0) {
+            return { success: false, message: "No activities to schedule. Please assign courses and sections." };
+        }
+        if (solverInput.time_slots.length === 0) {
+            return { success: false, message: "No available time slots defined. Please set an availability template." };
+        }
+
+        // 3. Call the Python solver service
+        const solverUrl = process.env.SOLVER_API_URL;
+        if (!solverUrl) {
+            throw new Error("SOLVER_API_URL environment variable is not set.");
+        }
+
+        console.log(`Sending ${solverInput.activities.length} activities to solver at ${solverUrl}...`);
+        const response = await fetch(`${solverUrl}/solve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(solverInput),
+            // Add a reasonable timeout for the solver
+            signal: AbortSignal.timeout(300000), // 5 minutes
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(`Solver failed: ${error.detail || response.statusText}`);
+        }
+        
+        const solution = await response.json();
+        console.log(`Solver returned a solution with ${solution.length} events.`);
+
+        // 4. Save the solution to the database
+        await saveSolutionToDatabase(scheduleInstanceId, solution);
+
+        revalidatePath(`/admin/schedules/${scheduleInstanceId}`);
+        return { success: true, message: "Allocation completed successfully! The timetable is now available." };
+
+    } catch (error: any) {
+        console.error("Allocation trigger failed:", error);
+        // Revert status to DRAFT if allocation fails
+        await prisma.scheduleInstance.update({
+            where: { id: scheduleInstanceId },
+            data: { status: 'DRAFT' },
+        });
+        return { success: false, message: error.message || "An unexpected error occurred." };
+    }
+}
 ```
 
-#### Step 4: Displaying the Final Timetable
+### Final Steps
 
-Once the status of a schedule is `COMPLETED`, your `/admin/schedules/[scheduleId]` page should display the results.
+1.  **Environment Variable**: Make sure you have the URL for your Python service in your `.env` file.
 
-  * Add a **"Timetable"** tab to the page.
-  * Inside this tab, create a calendar component (`schedule-calendar.tsx`).
-  * This component will fetch the `ScheduledEvent` records for the schedule.
-  * It will render the events on a weekly grid. You can build a custom grid with CSS or use a library like `FullCalendar` for a rich user experience.
+    ```
+    # .env
+    SOLVER_API_URL=http://127.0.0.1:8000
+    ```
 
-You have now built the entire end-to-end flow. This is a highly complex and impressive application. The final step is the most challenging, but by leveraging background jobs and dedicated solver libraries, it is entirely achievable.
+2.  **UI Integration**: On your `/admin/schedules/[scheduleId]` page, add a button that calls this `triggerAllocation` server action. You can show a loading state while it's running and display the success or error message from the action's return value using `sonner`.
+
+You have now fully connected the entire system. Your Next.js application is now capable of gathering all the complex relational data, formatting it precisely for your Python microservice, triggering the optimization, and saving the final, conflict-free timetable back into your database.

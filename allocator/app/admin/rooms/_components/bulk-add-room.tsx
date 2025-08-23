@@ -22,7 +22,7 @@ import {
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { MapPin, Plus, Trash2, Eye, Check } from "lucide-react";
+import { MapPin, Plus, Trash2, Eye, Check, X } from "lucide-react"; // Import X icon
 import { bulkCreateRooms } from "@/lib/actions";
 import { Room, RoomType } from "@prisma/client";
 import { toast } from "sonner";
@@ -118,6 +118,13 @@ export default function BulkAddRooms({ onUpdate }: BulkAddRoomsProps) {
 
     setPreviewRooms(rooms);
     setShowPreview(true);
+  };
+
+  // New function to remove a room from the preview list
+  const removePreviewRoom = (roomNameToRemove: string) => {
+    setPreviewRooms((prevRooms) =>
+      prevRooms.filter((room) => room.name !== roomNameToRemove)
+    );
   };
 
   const handleCreate = async () => {
@@ -351,8 +358,22 @@ export default function BulkAddRooms({ onUpdate }: BulkAddRoomsProps) {
             <div className="max-h-96 overflow-y-auto border rounded-lg">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 p-4">
                 {previewRooms.map((room, index) => (
-                  <Card key={index} className="p-3">
-                    <div className="space-y-1">
+                  <Card key={room.name} className="p-3 relative">
+                    {" "}
+                    {/* Use room.name as key and add relative positioning */}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="absolute top-1 right-1 h-6 w-6 p-0 text-gray-500 hover:text-red-500"
+                      onClick={() => removePreviewRoom(room.name)}
+                      aria-label={`Remove room ${room.name}`}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                    <div className="space-y-1 pr-6">
+                      {" "}
+                      {/* Add right padding to prevent text overlap with button */}
                       <div className="font-medium text-sm">{room.name}</div>
                       <div className="text-xs text-gray-500">
                         {room.building}
@@ -388,7 +409,12 @@ export default function BulkAddRooms({ onUpdate }: BulkAddRoomsProps) {
               >
                 Back to Edit
               </Button>
-              <Button onClick={handleCreate} disabled={isCreating}>
+              <Button
+                onClick={handleCreate}
+                disabled={isCreating || previewRooms.length === 0}
+              >
+                {" "}
+                {/* Disable if no rooms to create */}
                 {isCreating ? (
                   <>Creating...</>
                 ) : (
