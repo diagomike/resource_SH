@@ -59,6 +59,13 @@ type RequiredPersonnel {
   count Int
 }
 
+// ADD THIS NEW COMPOSITE TYPE
+type AvailabilityBlock {
+  dayOfWeek DayOfWeek
+  startTime String // "08:00"
+  endTime   String // "17:00"
+}
+
 // ---------------------------------------------------
 // CORE RESOURCES - The fundamental building blocks
 // ---------------------------------------------------
@@ -179,6 +186,13 @@ model ActivityTemplate {
   scheduledEvents ScheduledEvent[]
 }
 
+model AvailabilityTemplate {
+  id                String              @id @default(auto()) @map("_id") @db.ObjectId
+  name              String              @unique
+  availableSlots    AvailabilityBlock[]
+  scheduleInstances ScheduleInstance[]
+}
+
 // ---------------------------------------------------
 // SCHEDULING CONTEXT & OUTPUT
 // ---------------------------------------------------
@@ -191,6 +205,10 @@ model ScheduleInstance {
   status    ScheduleStatus @default(DRAFT)
 
   // Many-to-Many relations defining the scope of this schedule
+
+  availabilityTemplate   AvailabilityTemplate @relation(fields: [availabilityTemplateId], references: [id])
+  availabilityTemplateId String               @db.ObjectId
+
   courseIds    String[]  @db.ObjectId
   courses      Course[]  @relation(fields: [courseIds], references: [id])
   sectionIds   String[]  @db.ObjectId
@@ -251,215 +269,3 @@ model ScheduledEvent {
   scheduleInstance   ScheduleInstance @relation(fields: [scheduleInstanceId], references: [id])
   scheduleInstanceId String           @db.ObjectId
 }
-
-
-// File Hierarcy
-/app
-├── /admin
-│   ├── /courses
-│   │   ├── /_components
-│   │   │   ├── course-form.tsx         // Form for creating/editing a course
-│   │   │   ├── courses-table.tsx       // Data table to display all courses
-│   │   │   ├── columns.tsx             // Columns for the Data table
-│   │   │   └── client-page.tsx         // Client component to wrap table and actions
-│   │   ├── /[courseId]
-│   │   │   └── page.tsx                // Page to view/edit a single course
-│   │   ├── /create
-│   │   │   └── page.tsx                // Page with the form to create a new course
-│   │   └── page.tsx                    // Main page to display the courses table
-│   │
-│   ├── /personnel
-│   │   ├── /_components
-│   │   │   ├── personnel-form.tsx
-│   │   │   └── personnel-table.tsx
-│   │   ├── page.tsx                    // Similar structure for Personnel (Users)
-│   │   └── ...
-│   │
-│   ├── /rooms
-│   │   ├── /_components
-│   │   │   ├── room-form.tsx
-│   │   │   └── rooms-table.tsx
-│   │   ├── page.tsx                    // Similar structure for Rooms
-│   │   └── ...
-│   │
-│   ├── /programs
-│   │   ├── /_components
-│   │   │   └── program-structure.tsx   // Component to display nested Programs > Batches > Sections > Groups
-│   │   ├── page.tsx                    // Page to manage all academic structures
-│   │   └── ...
-│   │
-│   ├── /schedules
-│   │   ├── /_components
-│   │   │   ├── schedule-form.tsx
-│   │   │   ├── schedules-list.tsx
-│   │   │   ├── resource-assignment.tsx // Component to assign courses/personnel/rooms to a schedule
-│   │   │   └── schedule-calendar.tsx   // Component to display the final timetable
-│   │   ├── /[scheduleId]
-│   │   │   └── page.tsx                // The main dashboard for a single schedule instance
-│   │   ├── /create
-│   │   │   └── page.tsx
-│   │   └── page.tsx                    // Page to list all schedule instances
-│   │
-│   ├── layout.tsx                      // Admin dashboard layout (e.g., with sidebar)
-│   └── page.tsx                        // Admin dashboard homepage
-│
-├── /preferences
-│   └── /[scheduleId]/[personnelId]
-│       ├── /_components
-│       │   └── preference-sorter.tsx   // Drag-and-drop interface for ranking activities
-│       └── page.tsx                    // The public-facing page for personnel to set preferences
-│
-├── /timetable
-│   └── /[userId]
-│       └── page.tsx                    // Page for a logged-in user to view their personal timetable
-│
-├── /_components
-│   ├── /shared                        // General-purpose, reusable components
-│   │   ├── data-table.tsx
-│   │   ├── page-header.tsx
-│   │   ├── delete-alert-dialog.tsx
-│   │   └── ...
-│   └── /ui                            // Re-exporting ShadCN components (Button, Input, etc.)
-│
-├── layout.tsx                          // Root layout
-└── page.tsx                            // Public homepage
-
-/lib
-├── actions.ts                          // Your existing server actions file
-├── types.ts                            // Our new, central file for all type definitions
-└── utils.ts                            // Utility functions (e.g., date formatting)
-
-/prisma
-├── client.ts                           // Your existing singleton Prisma client
-└── schema.prisma                       // Your existing schema
-
-
-
-
-
-
-
-
-
-
-// type definintions
-// types/index.ts
-
-import {
-  Prisma,
-  Course,
-  ActivityTemplate,
-  User,
-  Room,
-  ScheduleInstance,
-  Program,
-  Batch,
-  Section,
-  Group,
-  PersonnelPreference,
-  ScheduledEvent,
-} from "@prisma/client";
-
-// -----------------------------------------------------------------------------
-// Type Definitions for Data Queries
-//
-// These types represent the shape of data returned by our server actions,
-// which often include relations (e.g., a Course with its ActivityTemplates).
-// We use Prisma.PromiseReturnType<T> to infer the return type of a function.
-// -----------------------------------------------------------------------------
-
-// --- Helper to infer Server Action return types ---
-// This allows us to get the type of the `data` property from our server actions
-type ServerActionData<T extends (...args: any) => any> =
-  Prisma.PromiseReturnType<T> extends { data?: infer U } ? U : never;
-
-// --- Full Data Structures from `getAll...` or `get...ById` actions ---
-
-// A Course that includes its array of ActivityTemplates
-export type CourseWithTemplates = Course & {
-  activityTemplates: ActivityTemplate[];
-};
-
-// A Program with its full nested hierarchy of children
-export type ProgramWithChildren = Program & {
-  batches: (Batch & {
-    sections: (Section & {
-      groups: Group[];
-    })[];
-  })[];
-};
-
-// A comprehensive type for a single ScheduleInstance dashboard page.
-// This includes all pooled resources, preferences, and the final schedule.
-export type FullScheduleInstance = ScheduleInstance & {
-  courses: CourseWithTemplates[];
-  sections: (Section & { batch: Batch & { program: Program } })[];
-  personnel: User[];
-  rooms: Room[];
-  preferences: PersonnelPreference[];
-  scheduledEvents: ScheduledEvent[];
-};
-
-// -----------------------------------------------------------------------------
-// Prop Types for Components
-//
-// Define the props for our React components based on the data types above.
-// -----------------------------------------------------------------------------
-
-export type CourseFormProps = {
-  course?: CourseWithTemplates; // Optional for create, required for edit
-  onSuccess: () => void;
-};
-
-export type CoursesTableProps = {
-  courses: CourseWithTemplates[];
-};
-
-export type PersonnelFormProps = {
-  user?: User;
-  onSuccess: () => void;
-};
-
-export type PersonnelTableProps = {
-  users: User[];
-};
-
-export type RoomFormProps = {
-  room?: Room;
-  onSuccess: () => void;
-};
-
-export type RoomsTableProps = {
-  rooms: Room[];
-};
-
-export type ProgramStructureProps = {
-  programs: ProgramWithChildren[];
-};
-
-export type SchedulesListProps = {
-  schedules: ScheduleInstance[];
-};
-
-export type ResourceAssignmentProps = {
-  schedule: FullScheduleInstance;
-  allCourses: Course[];
-  allSections: (Section & { batch: Batch & { program: Program } })[];
-  allPersonnel: User[];
-  allRooms: Room[];
-};
-
-export type PreferenceSorterProps = {
-  scheduleInstanceId: string;
-  personnelId: string;
-  // Get all activities available in this schedule for the user's role
-  availableActivities: (ActivityTemplate & { course: Course })[];
-  // Get existing preferences to pre-populate the sorter
-  existingPreferences: PersonnelPreference[];
-};
-
-export type ScheduleCalendarProps = {
-  events: ScheduledEvent[];
-  // We might also need the full context for displaying details on click
-  scheduleContext: FullScheduleInstance;
-};
