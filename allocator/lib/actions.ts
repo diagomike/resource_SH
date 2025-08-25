@@ -26,6 +26,8 @@ import {
   removeResourceSchema,
   availabilityTemplateSchema,
   updateScheduleTemplateSchema,
+  importSolutionSchema,
+  updateScheduleSolverSettingsSchema,
 } from "./schemas";
 import { DayOfWeek } from "@prisma/client";
 
@@ -1097,8 +1099,48 @@ export async function getScheduleInstanceById(id: string) {
       rooms: true,
       preferences: true,
       scheduledEvents: true,
+      // Include optional solver parameters
+      timePreferences: true, // Assuming a relation for time preferences
+      // These two below are auto imported since they are not models
+      // roomStickinessWeight: true,
+      // spacingPreference: true,
     },
   });
+}
+
+// NEW: Action to update optional solver settings on ScheduleInstance
+export async function updateScheduleSolverSettings(
+  input: z.infer<typeof updateScheduleSolverSettingsSchema>
+): Promise<ActionResponse<any>> {
+  const validation = updateScheduleSolverSettingsSchema.safeParse(input);
+  if (!validation.success) {
+    return {
+      success: false,
+      message: "Invalid input for solver settings.",
+      validationErrors: validation.error.flatten().fieldErrors,
+    };
+  }
+
+  const { scheduleInstanceId, roomStickinessWeight, spacingPreference } =
+    validation.data;
+
+  try {
+    await prisma.scheduleInstance.update({
+      where: { id: scheduleInstanceId },
+      data: {
+        roomStickinessWeight: roomStickinessWeight,
+        spacingPreference: spacingPreference,
+      },
+    });
+    revalidatePath(`/admin/schedules/${scheduleInstanceId}`); // Revalidate to show updated settings
+    return { success: true, message: "Solver settings updated successfully." };
+  } catch (error: any) {
+    console.error("Failed to update solver settings:", error);
+    return {
+      success: false,
+      message: error.message || "Failed to update solver settings.",
+    };
+  }
 }
 
 /**
@@ -1263,6 +1305,8 @@ async function getScheduleDataForSolver(scheduleInstanceId: string) {
       rooms: true,
       sections: { include: { groups: true } },
       preferences: true,
+      // Include the new optional solver parameters
+      timePreferences: true, // Assuming this is a relation on ScheduleInstance
     },
   });
 
@@ -1317,6 +1361,7 @@ async function getScheduleDataForSolver(scheduleInstanceId: string) {
             {
               id: `${template.id}_${section.id}`, // Unique ID for the solver task
               templateId: template.id, // Keep original template ID for saving results
+              courseId: course.id, // ADDED: Course ID for spacing constraint
               duration_slots: Math.ceil(template.durationMinutes / 30),
               required_room_type: template.requiredRoomType,
               required_personnel: template.requiredPersonnel,
@@ -1330,6 +1375,7 @@ async function getScheduleDataForSolver(scheduleInstanceId: string) {
           return section.groups.map((group) => ({
             id: `${template.id}_${group.id}`, // Unique ID for the solver task
             templateId: template.id, // Keep original template ID for saving results
+            courseId: course.id, // ADDED: Course ID for spacing constraint
             duration_slots: Math.ceil(template.durationMinutes / 30),
             required_room_type: template.requiredRoomType,
             required_personnel: template.requiredPersonnel,
@@ -1351,9 +1397,17 @@ async function getScheduleDataForSolver(scheduleInstanceId: string) {
   // Preferences link to the template, not the expanded activity, so we use templateId
   const preferences = schedule.preferences.map((p) => ({
     personnel_id: p.personnelId,
-    activity_id: p.activityTemplateId,
+    activity_id: p.activityTemplateId, // This correctly refers to ActivityTemplate ID
     rank: p.rank,
   }));
+
+  // Time preferences for the solver
+  const time_preferences = schedule.timePreferences
+    ? schedule.timePreferences.map((tp) => ({
+        time: tp.time,
+        rank: tp.rank,
+      }))
+    : [];
 
   return {
     activities,
@@ -1362,6 +1416,10 @@ async function getScheduleDataForSolver(scheduleInstanceId: string) {
     preferences,
     time_slots,
     days: availableDays,
+    // Include the new optional solver parameters
+    room_stickiness_weight: schedule.roomStickinessWeight || 0, // Default to 0 if not set
+    spacing_preference: schedule.spacingPreference || "NONE", // Default to "NONE"
+    time_preferences: time_preferences,
   };
 }
 
@@ -1383,7 +1441,8 @@ async function saveSolutionToDatabase(
     const dayIndex = Math.floor(globalSlotIndex / slotsPerDay);
     const slotInDay = globalSlotIndex % slotsPerDay;
 
-    const day = Object.values(DayOfWeek)[dayIndex];
+    // Ensure day is a valid DayOfWeek enum member
+    const day = Object.values(DayOfWeek)[dayIndex] as DayOfWeek;
     const hours = Math.floor(slotInDay / 2);
     const minutes = (slotInDay % 2) * 30;
 
@@ -1398,6 +1457,7 @@ async function saveSolutionToDatabase(
 
   const eventsToCreate = solution.map((event) => {
     const { day: startDay, time: startTime } = slotToTime(event.start_slot);
+    // Ensure end_slot conversion handles potential end of day correctly
     const { time: endTime } = slotToTime(event.end_slot);
 
     return {
@@ -1516,5 +1576,49 @@ export async function triggerAllocation(
       success: false,
       message: error.message || "An unexpected error occurred.",
     };
+  }
+}
+
+/**
+ * Gathers and formats allocation data for manual export.
+ */
+export async function exportAllocationData(
+  scheduleInstanceId: string
+): Promise<ActionResponse<any>> {
+  try {
+    const solverInput = await getScheduleDataForSolver(scheduleInstanceId);
+    return {
+      success: true,
+      message: "Data exported successfully.",
+      data: solverInput,
+    };
+  } catch (error: any) {
+    return { success: false, message: error.message };
+  }
+}
+
+/**
+ * Imports a JSON solution file and saves it to the database.
+ */
+export async function importAllocationSolution(
+  input: z.infer<typeof importSolutionSchema>
+): Promise<ActionResponse<any>> {
+  const validation = importSolutionSchema.safeParse(input);
+  if (!validation.success) {
+    return {
+      success: false,
+      message: "Invalid solution file format.",
+      validationErrors: validation.error.flatten().fieldErrors,
+    };
+  }
+
+  const { scheduleInstanceId, solution } = validation.data;
+
+  try {
+    await saveSolutionToDatabase(scheduleInstanceId, solution);
+    revalidatePath(`/admin/schedules/${scheduleInstanceId}`);
+    return { success: true, message: "Timetable imported successfully!" };
+  } catch (error: any) {
+    return { success: false, message: error.message };
   }
 }

@@ -72,9 +72,9 @@ export function CourseForm({ course, onSuccess }: CourseFormProps) {
       if (course) {
         // The update action would need a different schema and logic.
         // For now, let's just show a message.
-        toast.info("Update functionality to be implemented.");
+        // toast.info("Update functionality to be implemented.");
         console.log("Update values", { ...values, id: course.id });
-        // result = await updateCourse({ ...values, id: course.id });
+        result = await updateCourse({ ...values, id: course.id });
       } else {
         result = await createCourse(values);
       }

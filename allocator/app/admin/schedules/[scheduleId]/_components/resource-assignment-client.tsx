@@ -21,6 +21,8 @@ import { RoomsAssignmentTab } from "./rooms-assignment-tab";
 import { AttendeesAssignmentTab } from "./attendees-assignment-tab";
 import { PreviewTab } from "./preview-assignments-tab";
 import { triggerAllocation } from "@/lib/actions"; // Import the server action
+import { AllocationModal } from "./allocation-modal";
+import { Dialog } from "@/components/ui/dialog";
 
 // Define a more specific type for Sections with their parent relations
 export type SectionWithRelations = Section & {
@@ -52,7 +54,8 @@ export function ResourceAssignmentClient({
   allSections,
   availabilityTemplates,
 }: ResourceAssignmentClientProps) {
-  const [isAllocating, setIsAllocating] = useState(false);
+  // const [isLoading, setIsLoading] = useState(false); // Can be removed if only used for modal
+  const [isModalOpen, setIsModalOpen] = useState(false); // State to control the modal
 
   const scheduleInstanceWithRelations = {
     ...scheduleInstance,
@@ -63,48 +66,24 @@ export function ResourceAssignmentClient({
     availabilityTemplate: scheduleInstance.availabilityTemplate ?? null,
   };
 
-  const handleTriggerAllocation = async () => {
-    setIsAllocating(true);
-    toast.info("Starting allocation process...");
-    try {
-      const result = await triggerAllocation(scheduleInstance.id);
-      if (result.success) {
-        toast.success(result.message);
-      } else {
-        toast.error(result.message);
-      }
-    } catch (error) {
-      console.error("Failed to trigger allocation:", error);
-      toast.error("An unexpected error occurred during allocation.");
-    } finally {
-      setIsAllocating(false);
-    }
-  };
-
   return (
     <>
-      <div className="flex justify-end mb-4">
-        <Button
-          onClick={handleTriggerAllocation}
-          disabled={
-            isAllocating ||
-            scheduleInstance.status === "COMPLETED" ||
-            scheduleInstance.status === "LOCKED"
-          }
-          className="bg-blue-600 hover:bg-blue-700 rounded-md px-6 py-2"
-        >
-          {isAllocating ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : (
-            <Zap className="mr-2 h-4 w-4" />
-          )}
-          {scheduleInstance.status === "COMPLETED"
-            ? "Allocation Completed"
-            : scheduleInstance.status === "LOCKED"
-            ? "Allocation in Progress..."
-            : "Trigger Allocation"}
+      <div className="flex justify-between items-center mb-4">
+        <h1 className="text-3xl font-bold">Manage Schedule</h1>
+        {/* This button now opens the modal */}
+        <Button onClick={() => setIsModalOpen(true)}>
+          <Zap className="mr-2 h-4 w-4" />
+          Run Allocation
         </Button>
       </div>
+
+      <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
+        <AllocationModal
+          scheduleInstanceId={scheduleInstance.id}
+          onClose={() => setIsModalOpen(false)}
+        />
+      </Dialog>
+
       <Tabs defaultValue="preview">
         <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="preview">Preview</TabsTrigger>

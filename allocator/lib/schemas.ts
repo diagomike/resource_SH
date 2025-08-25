@@ -7,6 +7,7 @@ import {
   AttendeeLevel,
   ScheduleStatus,
   DayOfWeek,
+  SpacingPreference,
 } from "@prisma/client";
 
 // ---------------------------------------------------
@@ -220,4 +221,36 @@ export const preferencesSchema = z.object({
       rank: z.number().int().positive(),
     })
   ),
+});
+
+// Schema to validate the JSON solution being imported
+const solverSolutionEventSchema = z.object({
+  templateId: z.string(),
+  room_id: z.string(),
+  personnel_ids: z.array(z.string()),
+  attendee_level: z.string(),
+  attendee_id: z.string(),
+  start_slot: z.number(),
+  end_slot: z.number(),
+});
+
+export const importSolutionSchema = z.object({
+  scheduleInstanceId: z.string(),
+  solution: z.array(solverSolutionEventSchema),
+});
+
+// Zod schema for the live allocation form settings
+export const liveAllocationFormSchema = z.object({
+  roomStickinessWeight: z.number().int().min(0).optional().nullable(),
+  spacingPreference: z.enum(SpacingPreference).optional().nullable(),
+  // For time preferences, since it's a relation, we won't directly edit it here
+  // Instead, it will be fetched with the scheduleInstance.
+});
+
+// NEW: Schema for updating optional solver settings on ScheduleInstance
+export const updateScheduleSolverSettingsSchema = z.object({
+  scheduleInstanceId: z.string(),
+  roomStickinessWeight: z.coerce.number().int().min(0).optional().nullable(),
+  spacingPreference: z.nativeEnum(SpacingPreference).optional().nullable(),
+  // timePreferences are managed via their own model (ScheduleTimePreference) and not directly in this schema
 });

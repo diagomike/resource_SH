@@ -53,6 +53,13 @@ enum DayOfWeek {
   SUNDAY
 }
 
+// NEW ENUM for Spacing Preference
+enum SpacingPreference {
+  FAR_APART
+  CLOSE_TOGETHER
+  NONE
+}
+
 // Composite Type for embedding required personnel data directly into an ActivityTemplate
 type RequiredPersonnel {
   role  Role
@@ -193,6 +200,18 @@ model AvailabilityTemplate {
   scheduleInstances ScheduleInstance[]
 }
 
+// NEW MODEL for Time Preferences tied to a ScheduleInstance
+model ScheduleTimePreference {
+  id   String @id @default(auto()) @map("_id") @db.ObjectId
+  time String // "HH:MM" format
+  rank Int // A score, e.g., 10 for most preferred
+
+  scheduleInstance   ScheduleInstance @relation(fields: [scheduleInstanceId], references: [id])
+  scheduleInstanceId String           @db.ObjectId
+
+  @@unique([scheduleInstanceId, time]) // A schedule instance has a unique rank for a specific time
+}
+
 // ---------------------------------------------------
 // SCHEDULING CONTEXT & OUTPUT
 // ---------------------------------------------------
@@ -223,6 +242,11 @@ model ScheduleInstance {
 
   // The final output: all scheduled events for this instance
   scheduledEvents ScheduledEvent[]
+
+  // --- NEW OPTIONAL PARAMETERS FOR SOLVER ---
+  roomStickinessWeight Int? // Optional weight for room stickiness, null if not set
+  spacingPreference    SpacingPreference? // Optional spacing preference, null if not set
+  timePreferences      ScheduleTimePreference[] // Optional time preferences, stored as a relation
 }
 
 model PersonnelPreference {
