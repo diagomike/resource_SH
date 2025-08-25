@@ -254,3 +254,43 @@ export const updateScheduleSolverSettingsSchema = z.object({
   spacingPreference: z.nativeEnum(SpacingPreference).optional().nullable(),
   // timePreferences are managed via their own model (ScheduleTimePreference) and not directly in this schema
 });
+
+
+
+
+
+// New Schema: Input for fetching scheduled events at a specific time slot
+export const getEventsAtTimeSlotSchema = z.object({
+  scheduleInstanceId: z.string(),
+  dayOfWeek: z.nativeEnum(DayOfWeek),
+  startTime: z.string().regex(/^\d{2}:\d{2}$/, "Invalid start time format (HH:MM)."),
+});
+
+// New Schema: Input for fetching available resources at a specific time slot
+// endTime is needed to correctly check for overlaps
+export const getAvailableResourcesSchema = z.object({
+  dayOfWeek: z.enum(DayOfWeek),
+  startTime: z.string().regex(/^\d{2}:\d{2}$/, "Invalid start time format (HH:MM)."),
+  endTime: z.string().regex(/^\d{2}:\d{2}$/, "Invalid end time format (HH:MM)."),
+});
+
+// New Schema: Input for updating assigned resources of a ScheduledEvent
+// Allows setting room to null or providing a new roomId, and updating personnelIds.
+export const updateScheduledEventResourceSchema = z.object({
+  scheduledEventId: z.string(),
+  // roomId is nullable to allow unassigning a room
+  // .optional() allows updating only personnel or only room, without needing both
+  roomId: z.string().nullable().optional(),
+  // personnelIds array can be empty to unassign all personnel, or contain new IDs
+  personnelIds: z.array(z.string()).optional(),
+});
+
+// New Schema: Output for ScheduleInstance status overview
+export const scheduleInstanceStatusSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  // Define possible statuses for clarity in the UI
+  status: z.enum(["COMPLETED", "SEMI_ALLOCATED", "NOT_SCHEDULED"]),
+  totalActivitiesToSchedule: z.number().int().min(0), // Total potential activities
+  currentlyScheduledEvents: z.number().int().min(0),  // Count of actual ScheduledEvents
+});

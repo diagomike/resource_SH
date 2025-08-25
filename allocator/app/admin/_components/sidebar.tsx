@@ -12,6 +12,7 @@ import {
   Users,
   Warehouse,
   Clock,
+  CalendarDays,
 } from "lucide-react";
 
 const navItems = [
@@ -21,6 +22,7 @@ const navItems = [
   { href: "/admin/personnel", label: "Personnel", icon: Users },
   { href: "/admin/rooms", label: "Rooms", icon: Warehouse },
   { href: "/admin/programs", label: "Programs", icon: LayoutGrid },
+  { href: "/admin/timetable", label: "Timetable", icon: CalendarDays },
   { href: "/admin/availability-templates", label: "Availability", icon: Clock },
 ];
 

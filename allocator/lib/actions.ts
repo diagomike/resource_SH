@@ -28,8 +28,12 @@ import {
   updateScheduleTemplateSchema,
   importSolutionSchema,
   updateScheduleSolverSettingsSchema,
+  scheduleInstanceStatusSchema,
+  getEventsAtTimeSlotSchema,
+  getAvailableResourcesSchema,
+  updateScheduledEventResourceSchema,
 } from "./schemas";
-import { DayOfWeek } from "@prisma/client";
+import { AttendeeLevel, DayOfWeek, ScheduleInstance } from "@prisma/client";
 
 // ---------------------------------------------------
 // 1. Reusable Action Response Type
@@ -928,9 +932,22 @@ export async function deleteAvailabilityTemplate(
  * Fetches all AvailabilityTemplates.
  */
 export async function getAllAvailabilityTemplates() {
-  return prisma.availabilityTemplate.findMany({
-    orderBy: { name: "asc" },
-  });
+  try {
+    const availabilityTemplates = await prisma.availabilityTemplate.findMany({
+      orderBy: { name: "asc" },
+    });
+    return {
+      success: true,
+      message: "Availability Templates fetched successfully.",
+      data: availabilityTemplates,
+    };
+  } catch (error) {
+    console.error("Failed to fetch schedule instances:", error);
+    return {
+      success: false,
+      message: "Failed to fetch schedule instances.",
+    };
+  }
 }
 
 /**
@@ -984,12 +1001,27 @@ export async function createScheduleInstance(
 /**
  * Fetches all ScheduleInstances.
  */
-export async function getAllScheduleInstances() {
-  return prisma.scheduleInstance.findMany({
-    orderBy: {
-      startDate: "desc",
-    },
-  });
+export async function getAllScheduleInstances(): Promise<
+  ActionResponse<ScheduleInstance[]>
+> {
+  try {
+    const instances = await prisma.scheduleInstance.findMany({
+      orderBy: {
+        startDate: "desc",
+      },
+    });
+    return {
+      success: true,
+      message: "Schedules fetched successfully.",
+      data: instances,
+    };
+  } catch (error) {
+    console.error("Failed to fetch schedule instances:", error);
+    return {
+      success: false,
+      message: "Failed to fetch schedule instances.",
+    };
+  }
 }
 
 /**
@@ -1620,5 +1652,365 @@ export async function importAllocationSolution(
     return { success: true, message: "Timetable imported successfully!" };
   } catch (error: any) {
     return { success: false, message: error.message };
+  }
+}
+
+// ---------------------------------------------------
+// 3. Server Actions
+// ---------------------------------------------------
+
+// ... existing actions ...
+
+// NEW SECTION: Scheduled Event Management Actions
+
+/**
+ * Fetches all necessary data for the timetable view of a specific ScheduleInstance.
+ * This includes the schedule itself, its availability template, all its scheduled events,
+ * and global lists of all personnel and rooms to determine availability.
+ */
+export async function getTimetableDetails(scheduleInstanceId: string): Promise<
+  ActionResponse<{
+    scheduleInstance: any; // Type with full relations
+    scheduledEvents: any[]; // Type with full relations
+    allPersonnel: any[];
+    allRooms: any[];
+  }>
+> {
+  const validation = idSchema.safeParse({ id: scheduleInstanceId });
+  if (!validation.success) {
+    return { success: false, message: "Invalid schedule instance ID." };
+  }
+
+  try {
+    const scheduleInstance = await prisma.scheduleInstance.findUnique({
+      where: { id: scheduleInstanceId },
+      include: {
+        availabilityTemplate: true,
+        scheduledEvents: {
+          include: {
+            activityTemplate: true,
+            room: true,
+            personnel: true,
+            attendeeSection: true,
+            attendeeGroup: true,
+          },
+          orderBy: { startTime: "asc" }, // Order events for easier display
+        },
+      },
+    });
+
+    if (!scheduleInstance) {
+      return { success: false, message: "Schedule instance not found." };
+    }
+
+    const allPersonnel = await prisma.user.findMany({
+      orderBy: { name: "asc" },
+    });
+    const allRooms = await prisma.room.findMany({ orderBy: { name: "asc" } });
+
+    return {
+      success: true,
+      message: "Timetable details fetched successfully.",
+      data: {
+        scheduleInstance,
+        scheduledEvents: scheduleInstance.scheduledEvents,
+        allPersonnel,
+        allRooms,
+      },
+    };
+  } catch (error: any) {
+    console.error("Failed to fetch timetable details:", error);
+    return {
+      success: false,
+      message: error.message || "Failed to fetch timetable details.",
+    };
+  }
+}
+
+/**
+ * Fetches scheduled events that start at a specific day and time for a given schedule instance.
+ * This is used when a user clicks on a time block in the timetable.
+ */
+export async function getScheduledEventsForTimeSlot(
+  input: z.infer<typeof getEventsAtTimeSlotSchema>
+): Promise<ActionResponse<any[]>> {
+  const validation = getEventsAtTimeSlotSchema.safeParse(input);
+  if (!validation.success) {
+    return {
+      success: false,
+      message: "Invalid input for time slot query.",
+      validationErrors: validation.error.flatten().fieldErrors,
+    };
+  }
+
+  const { scheduleInstanceId, dayOfWeek, startTime } = validation.data;
+
+  try {
+    const scheduledEvents = await prisma.scheduledEvent.findMany({
+      where: {
+        scheduleInstanceId,
+        dayOfWeek,
+        startTime,
+      },
+      include: {
+        activityTemplate: true,
+        room: true,
+        personnel: true,
+        attendeeSection: {
+          include: {
+            batch: {
+              include: {
+                program: true,
+              },
+            },
+          },
+        },
+        attendeeGroup: {
+          include: {
+            section: {
+              include: {
+                batch: {
+                  include: {
+                    program: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { startTime: "asc" },
+    });
+
+    return {
+      success: true,
+      message: "Scheduled events fetched successfully.",
+      data: scheduledEvents,
+    };
+  } catch (error: any) {
+    console.error("Failed to fetch scheduled events for time slot:", error);
+    return {
+      success: false,
+      message: error.message || "Failed to fetch scheduled events.",
+    };
+  }
+}
+
+/**
+ * Fetches personnel and rooms that are currently not allocated in any ScheduledEvent
+ * during a specific time slot (day, start time, and end time).
+ * This provides a global list of free resources for swapping.
+ */
+export async function getFreeResourcesForTimeSlot(
+  input: z.infer<typeof getAvailableResourcesSchema>
+): Promise<
+  ActionResponse<{ availablePersonnel: any[]; availableRooms: any[] }>
+> {
+  const validation = getAvailableResourcesSchema.safeParse(input);
+  if (!validation.success) {
+    return {
+      success: false,
+      message: "Invalid input for available resources query.",
+      validationErrors: validation.error.flatten().fieldErrors,
+    };
+  }
+
+  const { dayOfWeek, startTime, endTime } = validation.data;
+
+  try {
+    // Find all scheduled events that overlap with the requested time slot
+    const overlappingEvents = await prisma.scheduledEvent.findMany({
+      where: {
+        dayOfWeek,
+        // An event overlaps if its start time is before the query's end time
+        // AND its end time is after the query's start time.
+        AND: [{ startTime: { lt: endTime } }, { endTime: { gt: startTime } }],
+      },
+      select: {
+        roomId: true,
+        personnelIds: true,
+      },
+    });
+
+    // Extract IDs of occupied rooms and personnel
+    const occupiedRoomIds = new Set<string>();
+    const occupiedPersonnelIds = new Set<string>();
+
+    overlappingEvents.forEach((event) => {
+      if (event.roomId) {
+        occupiedRoomIds.add(event.roomId);
+      }
+      event.personnelIds.forEach((id) => occupiedPersonnelIds.add(id));
+    });
+
+    // Find all personnel who are not occupied
+    const availablePersonnel = await prisma.user.findMany({
+      where: {
+        id: { notIn: Array.from(occupiedPersonnelIds) },
+      },
+      orderBy: { name: "asc" },
+    });
+
+    // Find all rooms that are not occupied
+    const availableRooms = await prisma.room.findMany({
+      where: {
+        id: { notIn: Array.from(occupiedRoomIds) },
+      },
+      orderBy: { name: "asc" },
+    });
+
+    return {
+      success: true,
+      message: "Available resources fetched successfully.",
+      data: { availablePersonnel, availableRooms },
+    };
+  } catch (error: any) {
+    console.error("Failed to fetch available resources:", error);
+    return {
+      success: false,
+      message: error.message || "Failed to fetch available resources.",
+    };
+  }
+}
+
+/**
+ * Updates the room and/or personnel assigned to a specific ScheduledEvent.
+ * This supports both removing (by setting to null/empty array) and reassigning.
+ */
+export async function updateScheduledEventResources(
+  input: z.infer<typeof updateScheduledEventResourceSchema>
+): Promise<ActionResponse<any>> {
+  const validation = updateScheduledEventResourceSchema.safeParse(input);
+  if (!validation.success) {
+    return {
+      success: false,
+      message: "Invalid input for updating scheduled event.",
+      validationErrors: validation.error.flatten().fieldErrors,
+    };
+  }
+
+  const { scheduledEventId, roomId, personnelIds } = validation.data;
+
+  try {
+    const updateData: any = {};
+
+    if (roomId !== undefined) {
+      // Check if roomId was provided, even if null
+      updateData.roomId = roomId;
+    }
+    if (personnelIds !== undefined) {
+      // Check if personnelIds was provided, even if empty array
+      updateData.personnelIds = personnelIds;
+    }
+
+    const updatedEvent = await prisma.scheduledEvent.update({
+      where: { id: scheduledEventId },
+      data: updateData,
+      include: {
+        // Include relations for updated data to be useful on the client
+        activityTemplate: true,
+        room: true,
+        personnel: true,
+        attendeeSection: true,
+        attendeeGroup: true,
+      },
+    });
+
+    revalidatePath(`/admin/schedules/${updatedEvent.scheduleInstanceId}`);
+    return {
+      success: true,
+      message: "Scheduled event resources updated successfully.",
+      data: updatedEvent,
+    };
+  } catch (error: any) {
+    console.error("Failed to update scheduled event resources:", error);
+    return {
+      success: false,
+      message: error.message || "Failed to update scheduled event resources.",
+    };
+  }
+}
+
+/**
+ * Calculates and returns the allocation status for all schedule instances.
+ * Statuses: COMPLETED, SEMI_ALLOCATED, NOT_SCHEDULED.
+ */
+export async function getScheduleInstanceOverviewStatuses(): Promise<
+  ActionResponse<z.infer<typeof scheduleInstanceStatusSchema>[]>
+> {
+  try {
+    const allScheduleInstances = await prisma.scheduleInstance.findMany({
+      include: {
+        courses: {
+          include: {
+            activityTemplates: true,
+          },
+        },
+        sections: {
+          include: {
+            groups: true,
+          },
+        },
+        scheduledEvents: {
+          select: { id: true }, // Only need count of scheduled events
+        },
+      },
+      orderBy: { name: "asc" },
+    });
+
+    const statuses: z.infer<typeof scheduleInstanceStatusSchema>[] = [];
+
+    for (const instance of allScheduleInstances) {
+      let totalExpectedActivities = 0;
+      // Calculate total potential activities based on courses, sections, and groups
+      instance.courses.forEach((course) => {
+        course.activityTemplates.forEach((template) => {
+          if (template.attendeeLevel === AttendeeLevel.SECTION) {
+            totalExpectedActivities += instance.sections.length;
+          } else if (template.attendeeLevel === AttendeeLevel.GROUP) {
+            instance.sections.forEach((section) => {
+              // Assuming all groups in a section take all group-level activities
+              // This needs to be carefully aligned with how your solver input generates activities
+              totalExpectedActivities += section.groups.length;
+            });
+          }
+        });
+      });
+
+      const currentlyScheduledEvents = instance.scheduledEvents.length;
+      let status: z.infer<typeof scheduleInstanceStatusSchema>["status"];
+
+      if (totalExpectedActivities === 0) {
+        // If there are no activities defined for the schedule instance, it can't be scheduled.
+        // We'll treat this as 'NOT_SCHEDULED' or you might want a specific 'NO_ACTIVITIES' status.
+        status = "NOT_SCHEDULED";
+      } else if (currentlyScheduledEvents === totalExpectedActivities) {
+        status = "COMPLETED";
+      } else if (currentlyScheduledEvents > 0) {
+        status = "SEMI_ALLOCATED";
+      } else {
+        status = "NOT_SCHEDULED";
+      }
+
+      statuses.push({
+        id: instance.id,
+        name: instance.name,
+        status,
+        totalActivitiesToSchedule: totalExpectedActivities,
+        currentlyScheduledEvents: currentlyScheduledEvents,
+      });
+    }
+
+    return {
+      success: true,
+      message: "Schedule instance statuses fetched successfully.",
+      data: statuses,
+    };
+  } catch (error: any) {
+    console.error("Failed to fetch schedule instance statuses:", error);
+    return {
+      success: false,
+      message: error.message || "Failed to fetch schedule instance statuses.",
+    };
   }
 }
